@@ -450,6 +450,7 @@ export async function GET(request: NextRequest) {
           remoteVideo.style.width = '100%';
           remoteVideo.style.height = '100vh';
           remoteVideo.style.objectFit = 'cover';
+          remoteVideo.style.zIndex = '5'; // 他の要素より前面に表示
           
           // ビデオ要素にストリームを設定
           remoteVideo.srcObject = remoteStream;
@@ -501,6 +502,10 @@ export async function GET(request: NextRequest) {
             statusDiv.textContent = 'ネットワーク接続を確認中...';
           } else if (state === 'connected' || state === 'completed') {
             statusDiv.textContent = 'カメラと接続しました。映像を受信中...';
+            // 接続成功時にビデオ要素を再度確認
+            if (remoteVideo.srcObject && remoteVideo.paused) {
+              remoteVideo.play().catch(e => log(\`再生試行エラー: \${e.message}\`));
+            }
           } else if (state === 'failed' || state === 'disconnected') {
             statusDiv.textContent = 'ネットワーク接続に問題があります。再接続を試みています...';
             // 再接続を試みる
@@ -511,20 +516,6 @@ export async function GET(request: NextRequest) {
               }
               connectToCamera();
             }, 3000);
-          }
-          
-          // PeerConnectionの状態を詳細にログ
-          if (call.peerConnection) {
-            const pc = call.peerConnection;
-            log(\`PeerConnection状態: \${pc.connectionState}, ICE状態: \${pc.iceConnectionState}, シグナリング状態: \${pc.signalingState}\`);
-            
-            // 受信トラックの状態を確認
-            const receivers = pc.getReceivers();
-            receivers.forEach(receiver => {
-              if (receiver.track && receiver.track.kind === 'video') {
-                log(\`受信ビデオトラック: \${receiver.track.label || 'ラベルなし'}, 有効: \${receiver.track.enabled}, 状態: \${receiver.track.readyState}\`);
-              }
-            });
           }
         });
         
@@ -596,6 +587,11 @@ export async function GET(request: NextRequest) {
     // 初期化
     log("初期化開始: モード=" + mode + ", ルームID=" + roomId);
     initPeer();
+
+    // デバッグ表示切替ボタンをより目立たせる
+    showDebugBtn.style.backgroundColor = 'rgba(0,0,0,0.7)';
+    showDebugBtn.style.color = 'white';
+    showDebugBtn.style.fontWeight = 'bold';
   </script>
 </body>
 </html>`,
