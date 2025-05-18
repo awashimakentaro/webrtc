@@ -6,16 +6,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon } from "lucide-react"
+import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon, XIcon } from "lucide-react"
 import QRCode from "./components/qr-code"
 
 export default function Home() {
   const [roomId, setRoomId] = useState("")
   const [isCopied, setIsCopied] = useState(false)
   const [activeTab, setActiveTab] = useState("viewer")
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [isConnected, setIsConnected] = useState(false)
+  const [showIframe, setShowIframe] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState("未接続")
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   // ページロード時に一意のルームIDを生成
   useEffect(() => {
@@ -50,23 +50,19 @@ export default function Home() {
     }
   }, [])
 
-  // WebSocketからのステータス更新を受け取るためのイベントリスナー
+  // メッセージイベントリスナー
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.addEventListener("message", (event) => {
-        if (event.data.type === "connection-status") {
-          setConnectionStatus(event.data.status)
-          if (event.data.status === "接続済み") {
-            setIsConnected(true)
-          }
-        }
-      })
+    const handleMessage = (event: MessageEvent) => {
+      // 接続状態の更新
+      if (event.data && event.data.type === "connection-status") {
+        setConnectionStatus(event.data.status)
+      }
     }
 
+    window.addEventListener("message", handleMessage)
+
     return () => {
-      if (typeof window !== "undefined") {
-        window.removeEventListener("message", () => {})
-      }
+      window.removeEventListener("message", handleMessage)
     }
   }, [])
 
@@ -134,21 +130,35 @@ export default function Home() {
                     </span>
                   </p>
                 </div>
-                <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden">
-                  {isConnected ? (
-                    <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                      カメラが接続されるとここに映像が表示されます
+
+                {!showIframe ? (
+                  <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                    カメラが接続されるとここに映像が表示されます
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <div className="absolute top-2 right-2 z-10">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-6 w-6 rounded-full bg-white"
+                        onClick={() => setShowIframe(false)}
+                      >
+                        <XIcon className="h-3 w-3" />
+                      </Button>
                     </div>
-                  )}
-                </div>
+                    <iframe
+                      ref={iframeRef}
+                      src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
+                      className="w-full aspect-video rounded-md border-0"
+                      allow="camera;microphone"
+                      title="リモートカメラ"
+                    />
+                  </div>
+                )}
               </div>
 
-              <Button
-                className="w-full"
-                onClick={() => (window.location.href = `/api/connect?room=${roomId}&mode=viewer`)}
-              >
+              <Button className="w-full" onClick={() => setShowIframe(true)} disabled={showIframe}>
                 接続開始
               </Button>
             </TabsContent>
@@ -171,7 +181,7 @@ export default function Home() {
                     接続状態:{" "}
                     <span
                       className={
-                        connectionStatus === "接��済み"
+                        connectionStatus === "接続済み"
                           ? "text-green-500"
                           : connectionStatus === "接続中..."
                             ? "text-amber-500"
@@ -182,15 +192,35 @@ export default function Home() {
                     </span>
                   </p>
                 </div>
-                <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden">
-                  <video id="camera-preview" autoPlay playsInline muted className="w-full h-full object-cover" />
-                </div>
+
+                {!showIframe ? (
+                  <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                    「カメラを開始」ボタンをクリックしてカメラを起動します
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <div className="absolute top-2 right-2 z-10">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-6 w-6 rounded-full bg-white"
+                        onClick={() => setShowIframe(false)}
+                      >
+                        <XIcon className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <iframe
+                      ref={iframeRef}
+                      src={`/api/connect?room=${roomId}&mode=camera&embedded=true`}
+                      className="w-full aspect-video rounded-md border-0"
+                      allow="camera;microphone"
+                      title="カメラプレビュー"
+                    />
+                  </div>
+                )}
               </div>
 
-              <Button
-                className="w-full"
-                onClick={() => (window.location.href = `/api/connect?room=${roomId}&mode=camera`)}
-              >
+              <Button className="w-full" onClick={() => setShowIframe(true)} disabled={showIframe}>
                 カメラを開始
               </Button>
             </TabsContent>

@@ -119,6 +119,58 @@ export async function GET(request: NextRequest) {
               updateStatus("接続済み");
               remoteVideo.srcObject = remoteStream;
               remoteVideo.classList.remove('hidden');
+              
+              // 親ウィンドウにストリームを転送（視聴モードの場合）
+              if (mode === "viewer" && window.opener) {
+                try {
+                  // MediaStreamを直接送信できないため、ビデオ要素のIDを通知
+                  window.opener.postMessage({ 
+                    type: 'stream-ready', 
+                    status: '接続済み'
+                  }, '*');
+                  
+                  // 親ウィンドウからのメッセージを待ち受ける
+                  window.addEventListener('message', (event) => {
+                    if (event.data.type === 'request-stream-transfer') {
+                      // ストリーム転送のためのRTCPeerConnectionを作成
+                      const pc = new RTCPeerConnection();
+                      remoteStream.getTracks().forEach(track => {
+                        pc.addTrack(track, remoteStream);
+                      });
+                      
+                      pc.onicecandidate = e => {
+                        if (e.candidate) {
+                          window.opener.postMessage({
+                            type: 'ice-candidate',
+                            candidate: e.candidate
+                          }, '*');
+                        }
+                      };
+                      
+                      // オファーを作成して親ウィンドウに送信
+                      pc.createOffer().then(offer => {
+                        pc.setLocalDescription(offer);
+                        window.opener.postMessage({
+                          type: 'offer',
+                          offer: offer
+                        }, '*');
+                      });
+                      
+                      // 親ウィンドウからの応答を処理
+                      window.addEventListener('message', (e) => {
+                        if (e.data.type === 'answer') {
+                          pc.setRemoteDescription(new RTCSessionDescription(e.data.answer));
+                        }
+                        if (e.data.type === 'ice-candidate') {
+                          pc.addIceCandidate(new RTCIceCandidate(e.data.candidate));
+                        }
+                      });
+                    }
+                  });
+                } catch (err) {
+                  log('ストリーム転送エラー: ' + err);
+                }
+              }
             });
             
             call.on('error', (err) => {
