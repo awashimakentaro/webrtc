@@ -22,8 +22,16 @@ export async function GET(request: NextRequest) {
     body { margin: 0; font-family: sans-serif; background-color: #f5f5f5; color: #333; }
     #status { padding: 20px; text-align: center; background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     #debug { padding: 10px; margin: 10px; background-color: #f0f0f0; border-radius: 5px; font-size: 12px; white-space: pre-wrap; display: none; }
-    video { width: 100%; height: 100vh; object-fit: cover; background-color: #000; }
-    .hidden { display: none; }
+    video { 
+      width: 100%; 
+      height: 100vh; 
+      object-fit: cover; 
+      background-color: #000; 
+      display: block;
+    }
+    .hidden { 
+      display: none !important; 
+    }
     #controls {
       position: fixed;
       bottom: 20px;
@@ -225,18 +233,36 @@ export async function GET(request: NextRequest) {
         if (localStream) {
           call.answer(localStream);
           log('着信に応答しました');
+          
+          // ローカルストリーム情報をログに記録
+          const videoTracks = localStream.getVideoTracks();
+          const audioTracks = localStream.getAudioTracks();
+          log(\`送信ストリーム情報: ビデオトラック \${videoTracks.length}個, オーディオトラック \${audioTracks.length}個\`);
+          
+          if (videoTracks.length > 0) {
+            log(\`ビデオトラック: \${videoTracks[0].label}, 有効: \${videoTracks[0].enabled}, 状態: \${videoTracks[0].readyState}\`);
+          }
+          
           statusDiv.textContent = '視聴者と接続しました。映像を送信中...';
           controls.classList.remove('hidden');
+          
+          // ICE接続状態の監視を追加
+          call.on('iceStateChanged', (state) => {
+            log(\`ICE接続状態変更: \${state}\`);
+            if (state === 'failed' || state === 'disconnected') {
+              statusDiv.textContent = 'ネットワーク接続に問題があります。';
+            }
+          });
         } else {
           log('カメラが準備できていないため着信に応答できません');
           statusDiv.textContent = 'カメラが準備できていません。';
         }
-        
+
         call.on('stream', (remoteStream) => {
           log('リモートストリームを受信しました');
           // カメラモードでは通常リモートストリームは使用しない
         });
-        
+
         call.on('close', () => {
           log('通話が終了しました');
           statusDiv.textContent = '通話が終了しました。';
@@ -256,8 +282,14 @@ export async function GET(request: NextRequest) {
         log('カメラ起動開始');
         statusDiv.textContent = 'カメラにアクセス中...';
         
+        // より詳細なビデオ制約を設定
         const constraints = {
-          video: { facingMode: facingMode },
+          video: { 
+            facingMode: facingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+          },
           audio: true
         };
         
@@ -268,6 +300,17 @@ export async function GET(request: NextRequest) {
         localVideo.srcObject = localStream;
         localVideo.classList.remove('hidden');
         controls.classList.remove('hidden');
+        
+        // ストリーム情報をログに記録
+        const videoTracks = localStream.getVideoTracks();
+        const audioTracks = localStream.getAudioTracks();
+        log(\`ローカルストリーム情報: ビデオトラック \${videoTracks.length}個, オーディオトラック \${audioTracks.length}個\`);
+        
+        if (videoTracks.length > 0) {
+          const settings = videoTracks[0].getSettings();
+          log(\`ビデオ設定: \${settings.width}x\${settings.height}@\${settings.frameRate}fps\`);
+        }
+        
         statusDiv.textContent = 'カメラを起動しました。視聴者からの接続を待機中...';
         
         // デバイス情報をログに記録
@@ -360,10 +403,65 @@ export async function GET(request: NextRequest) {
         
         call.on('stream', (remoteStream) => {
           log('リモートストリーム受信');
+          
+          // ストリーム情報をログに記録
+          const videoTracks = remoteStream.getVideoTracks();
+          const audioTracks = remoteStream.getAudioTracks();
+          log(\`受信ストリーム情報: ビデオトラック \${videoTracks.length}個, オーディオトラック \${audioTracks.length}個\`);
+          
+          if (videoTracks.length > 0) {
+            log(\`ビデオトラック: \${videoTracks[0].label}, 有効: \${videoTracks[0].enabled}, 状態: \${videoTracks[0].readyState}\`);
+          }
+          
+          // ビデオ要素にストリームを設定
           remoteVideo.srcObject = remoteStream;
           remoteVideo.classList.remove('hidden');
+          
+          // 自動再生に失敗した場合に備えて手動で再生を試みる
+          remoteVideo.play().catch(err => {
+            log(\`ビデオ再生エラー: \${err.message}\`);
+            statusDiv.textContent = 'ビデオの自動再生に失敗しました。画面をタップしてください。';
+            
+            // ユーザーのインタラクションで再生を試みるためのボタンを表示
+            const playButton = document.createElement('button');
+            playButton.textContent = '映像を再生';
+            playButton.style.position = 'fixed';
+            playButton.style.top = '50%';
+            playButton.style.left = '50%';
+            playButton.style.transform = 'translate(-50%, -50%)';
+            playButton.style.zIndex = '1000';
+            playButton.style.padding = '16px 32px';
+            
+            playButton.onclick = () => {
+              remoteVideo.play().then(() => {
+                log('手動再生成功');
+                document.body.removeChild(playButton);
+              }).catch(e => {
+                log(\`手動再生失敗: \${e.message}\`);
+              });
+            };
+            
+            document.body.appendChild(playButton);
+          });
+          
           statusDiv.textContent = 'カメラと接続しました。映像を受信中...';
         });
+        
+        // ICE接続状態の監視を追加
+        call.on('iceStateChanged', (state) => {
+          log(\`ICE接続状態変更: \${state}\`);
+          if (state === 'failed' || state === 'disconnected') {
+            statusDiv.textContent = 'ネットワーク接続に問題があります。再接続を試みています...';
+            // 再接続を試みる
+            setTimeout(() => {
+              if (currentCall) {
+                currentCall.close();
+                currentCall = null;
+              }
+              connectToCamera();
+            }, 3000);
+        }
+      });
         
         call.on('close', () => {
           log('通話終了');
