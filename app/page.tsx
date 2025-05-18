@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyIcon, SmartphoneIcon, MonitorIcon } from "lucide-react"
+import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon } from "lucide-react"
 import QRCode from "./components/qr-code"
 
 export default function Home() {
@@ -15,6 +15,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("viewer")
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [connectionStatus, setConnectionStatus] = useState("未接続")
 
   // ページロード時に一意のルームIDを生成
   useEffect(() => {
@@ -49,13 +50,33 @@ export default function Home() {
     }
   }, [])
 
+  // WebSocketからのステータス更新を受け取るためのイベントリスナー
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.addEventListener("message", (event) => {
+        if (event.data.type === "connection-status") {
+          setConnectionStatus(event.data.status)
+          if (event.data.status === "接続済み") {
+            setIsConnected(true)
+          }
+        }
+      })
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("message", () => {})
+      }
+    }
+  }, [])
+
   return (
     <div className="container flex items-center justify-center min-h-screen py-8">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
           <CardDescription className="text-center">
-            WebRTCを使用してスマートフォンカメラの映像をPCに表示します
+            WebRTCを使用してスマートフォンカメラの映像をブラウザに表示します
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -96,7 +117,23 @@ export default function Home() {
               </div>
 
               <div className="mt-4">
-                <p className="text-sm mb-2">カメラ映像：</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <WifiIcon className="w-4 h-4" />
+                  <p className="text-sm">
+                    接続状態:{" "}
+                    <span
+                      className={
+                        connectionStatus === "接続済み"
+                          ? "text-green-500"
+                          : connectionStatus === "接続中..."
+                            ? "text-amber-500"
+                            : "text-gray-500"
+                      }
+                    >
+                      {connectionStatus}
+                    </span>
+                  </p>
+                </div>
                 <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden">
                   {isConnected ? (
                     <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
@@ -110,13 +147,7 @@ export default function Home() {
 
               <Button
                 className="w-full"
-                onClick={() => {
-                  if (!roomId) {
-                    alert("ルームIDを入力してください")
-                    return
-                  }
-                  window.location.href = `/api/connect?room=${roomId}&mode=viewer`
-                }}
+                onClick={() => (window.location.href = `/api/connect?room=${roomId}&mode=viewer`)}
               >
                 接続開始
               </Button>
@@ -134,7 +165,23 @@ export default function Home() {
               </div>
 
               <div className="mt-4">
-                <p className="text-sm mb-2">カメラプレビュー：</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <WifiIcon className="w-4 h-4" />
+                  <p className="text-sm">
+                    接続状態:{" "}
+                    <span
+                      className={
+                        connectionStatus === "接続済み"
+                          ? "text-green-500"
+                          : connectionStatus === "接続中..."
+                            ? "text-amber-500"
+                            : "text-gray-500"
+                      }
+                    >
+                      {connectionStatus}
+                    </span>
+                  </p>
+                </div>
                 <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden">
                   <video id="camera-preview" autoPlay playsInline muted className="w-full h-full object-cover" />
                 </div>
@@ -142,13 +189,7 @@ export default function Home() {
 
               <Button
                 className="w-full"
-                onClick={() => {
-                  if (!roomId) {
-                    alert("ルームIDを入力してください")
-                    return
-                  }
-                  window.location.href = `/api/connect?room=${roomId}&mode=camera`
-                }}
+                onClick={() => (window.location.href = `/api/connect?room=${roomId}&mode=camera`)}
               >
                 カメラを開始
               </Button>
