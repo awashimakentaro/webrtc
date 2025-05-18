@@ -1,9 +1,4 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { Server as SocketIOServer } from "socket.io"
-import { createServer } from "http"
-
-// シグナリングサーバーの状態を保持するグローバル変数
-let io: any
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -14,40 +9,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Room ID and mode are required" }, { status: 400 })
   }
 
-  // シグナリングサーバーが初期化されていない場合は初期化
-  if (!io) {
-    const httpServer = createServer()
-    io = new SocketIOServer(httpServer, {
-      cors: {
-        origin: "*",
-        methods: ["GET", "POST"],
-      },
-    })
-
-    io.on("connection", (socket: any) => {
-      // ルームに参加
-      socket.on("join", (roomId: string, mode: string) => {
-        socket.join(roomId)
-        socket.to(roomId).emit("user-connected", { id: socket.id, mode })
-      })
-
-      // シグナリングメッセージの転送
-      socket.on("signal", (to: string, signal: any) => {
-        socket.to(to).emit("signal", {
-          from: socket.id,
-          signal,
-        })
-      })
-
-      // 切断時の処理
-      socket.on("disconnect", () => {
-        io.emit("user-disconnected", socket.id)
-      })
-    })
-
-    httpServer.listen(3001)
-  }
-
   // WebRTCクライアントコードを含むHTMLを返す
   return new NextResponse(
     `
@@ -56,108 +17,237 @@ export async function GET(request: NextRequest) {
     <head>
       <title>WebRTC Connection</title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
-      <script src="https://unpkg.com/simple-peer@9.11.0/simplepeer.min.js"></script>
+      <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
       <style>
         body { margin: 0; font-family: sans-serif; }
         #status { padding: 20px; text-align: center; }
         video { width: 100%; height: 100vh; object-fit: cover; }
         .hidden { display: none; }
+        #controls {
+          position: fixed;
+          bottom: 20px;
+          left: 0;
+          right: 0;
+          display: flex;
+          justify-content: center;
+          gap: 10px;
+          z-index: 10;
+        }
+        button {
+          padding: 10px 20px;
+          background: #000;
+          color: white;
+          border: none;
+          border-radius: 20px;
+          font-weight: bold;
+          opacity: 0.8;
+        }
       </style>
     </head>
     <body>
       <div id="status">接続中...</div>
       <video id="localVideo" autoplay playsinline muted class="hidden"></video>
       <video id="remoteVideo" autoplay playsinline class="hidden"></video>
+      
+      <div id="controls" class="hidden">
+        <button id="switchCamera">カメラ切替</button>
+        <button id="hangup">切断</button>
+      </div>
 
       <script>
         const roomId = "${roomId}";
         const mode = "${mode}";
-        const socket = io("http://localhost:3001");
-        let peer;
-
-        // ビデオ要素
+        const statusDiv = document.getElementById('status');
         const localVideo = document.getElementById('localVideo');
         const remoteVideo = document.getElementById('remoteVideo');
-        const statusDiv = document.getElementById('status');
-
-        // カメラモードの場合はカメラを起動
-        if (mode === "camera") {
-          localVideo.classList.remove('hidden');
-          navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true })
-            .then(stream => {
-              localVideo.srcObject = stream;
-              socket.emit("join", roomId, "camera");
-              
-              socket.on("user-connected", ({ id, mode }) => {
-                if (mode === "viewer") {
-                  statusDiv.textContent = "視聴者が接続しました。映像を送信中...";
-                  startPeer(id, stream, true);
+        const controls = document.getElementById('controls');
+        const switchCameraBtn = document.getElementById('switchCamera');
+        const hangupBtn = document.getElementById('hangup');
+        
+        let peer;
+        let currentCall;
+        let localStream;
+        let facingMode = "environment"; // デフォルトは背面カメラ
+        
+        // PeerJSの初期化
+        function initPeer() {
+          // ユニークなIDを生成（roomId + モード）
+          const peerId = mode === "camera" ? roomId + "-camera" : roomId + "-viewer";
+          
+          peer = new Peer(peerId, {
+            debug: 3,
+            config: {
+              'iceServers': [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+              ]
+            }
+          });
+          
+          peer.on('open', (id) => {
+            statusDiv.textContent = 'PeerJSサーバーに接続しました。ID: ' + id;
+            
+            if (mode === "camera") {
+              startCamera();
+            } else if (mode === "viewer") {
+              connectToCamera();
+            }
+          });
+          
+          peer.on('error', (err) => {
+            statusDiv.textContent = 'エラーが発生しました: ' + err.type;
+            console.error(err);
+          });
+          
+          // 着信処理（カメラモードの場合）
+          peer.on('call', (call) => {
+            currentCall = call;
+            
+            if (localStream) {
+              call.answer(localStream);
+              statusDiv.textContent = '視聴者と接続しました。映像を送信中...';
+              controls.classList.remove('hidden');
+            } else {
+              statusDiv.textContent = 'カメラが準備できていません。';
+            }
+            
+            call.on('stream', (remoteStream) => {
+              // カメラモードでは通常リモートストリームは使用しない
+            });
+            
+            call.on('close', () => {
+              statusDiv.textContent = '通話が終了しました。';
+              controls.classList.add('hidden');
+            });
+            
+            call.on('error', (err) => {
+              statusDiv.textContent = '通話エラー: ' + err;
+              console.error(err);
+            });
+          });
+        }
+        
+        // カメラの起動（カメラモード）
+        async function startCamera() {
+          try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: facingMode },
+              audio: true
+            });
+            
+            localVideo.srcObject = localStream;
+            localVideo.classList.remove('hidden');
+            controls.classList.remove('hidden');
+            statusDiv.textContent = 'カメラを起動しました。視聴者からの接続を待機中...';
+          } catch (err) {
+            statusDiv.textContent = 'カメラへのアクセスに失敗しました: ' + err.message;
+            console.error(err);
+          }
+        }
+        
+        // カメラの切り替え
+        async function switchCameraFacing() {
+          if (!localStream) return;
+          
+          // 現在のトラックを停止
+          localStream.getTracks().forEach(track => track.stop());
+          
+          // カメラの向きを切り替え
+          facingMode = facingMode === "environment" ? "user" : "environment";
+          
+          try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: facingMode },
+              audio: true
+            });
+            
+            localVideo.srcObject = localStream;
+            
+            // 通話中なら新しいストリームを送信
+            if (currentCall) {
+              currentCall.peerConnection.getSenders().forEach(sender => {
+                if (sender.track.kind === "video") {
+                  const videoTrack = localStream.getVideoTracks()[0];
+                  sender.replaceTrack(videoTrack);
                 }
               });
-            })
-            .catch(err => {
-              statusDiv.textContent = "カメラへのアクセスに失敗しました: " + err.message;
-            });
-        } 
-        // 視聴モードの場合
-        else if (mode === "viewer") {
-          remoteVideo.classList.remove('hidden');
-          socket.emit("join", roomId, "viewer");
+            }
+            
+            statusDiv.textContent = facingMode === "environment" ? '背面カメラに切り替えました' : '前面カメラに切り替えました';
+          } catch (err) {
+            statusDiv.textContent = 'カメラの切り替えに失敗しました: ' + err.message;
+            console.error(err);
+          }
+        }
+        
+        // カメラに接続（視聴モード）
+        function connectToCamera() {
+          const cameraPeerId = roomId + "-camera";
+          statusDiv.textContent = 'カメラに接続しています...';
           
-          socket.on("user-connected", ({ id, mode }) => {
-            if (mode === "camera") {
-              statusDiv.textContent = "カメラが接続されました。映像を受信中...";
-              startPeer(id, null, false);
-            }
-          });
+          try {
+            const call = peer.call(cameraPeerId, new MediaStream()); // 空のストリームで発信
+            currentCall = call;
+            
+            call.on('stream', (remoteStream) => {
+              remoteVideo.srcObject = remoteStream;
+              remoteVideo.classList.remove('hidden');
+              statusDiv.textContent = 'カメラと接続しました。映像を受信中...';
+            });
+            
+            call.on('close', () => {
+              statusDiv.textContent = '通話が終了しました。';
+              remoteVideo.classList.add('hidden');
+            });
+            
+            call.on('error', (err) => {
+              statusDiv.textContent = '通話エラー: ' + err;
+              console.error(err);
+            });
+          } catch (err) {
+            statusDiv.textContent = '接続に失敗しました: ' + err.message;
+            console.error(err);
+          }
         }
-
-        // WebRTC接続の開始
-        function startPeer(id, stream, initiator) {
-          peer = new SimplePeer({
-            initiator: initiator,
-            stream: stream,
-            trickle: false
-          });
-
-          peer.on("signal", data => {
-            socket.emit("signal", id, data);
-          });
-
-          peer.on("connect", () => {
-            statusDiv.textContent = "接続が確立されました！";
-          });
-
-          peer.on("stream", stream => {
-            remoteVideo.srcObject = stream;
-          });
-
-          peer.on("error", err => {
-            statusDiv.textContent = "エラーが発生しました: " + err.message;
-          });
-
-          socket.on("signal", ({ from, signal }) => {
-            if (from === id) {
-              peer.signal(signal);
-            }
-          });
-
-          socket.on("user-disconnected", userId => {
-            if (userId === id && peer) {
-              statusDiv.textContent = "相手が切断しました。";
-              peer.destroy();
-            }
-          });
-        }
-
-        // ページを離れる前に接続を閉じる
-        window.onbeforeunload = () => {
+        
+        // 切断処理
+        function hangup() {
+          if (currentCall) {
+            currentCall.close();
+            currentCall = null;
+          }
+          
+          if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+            localStream = null;
+          }
+          
           if (peer) {
             peer.destroy();
+            peer = null;
           }
-          socket.disconnect();
-        };
+          
+          localVideo.classList.add('hidden');
+          remoteVideo.classList.add('hidden');
+          controls.classList.add('hidden');
+          statusDiv.textContent = '切断しました。';
+          
+          // 3秒後にメインページに戻る
+          setTimeout(() => {
+            window.location.href = "/";
+          }, 3000);
+        }
+        
+        // イベントリスナー
+        switchCameraBtn.addEventListener('click', switchCameraFacing);
+        hangupBtn.addEventListener('click', hangup);
+        
+        // ページを離れる前に接続を閉じる
+        window.addEventListener('beforeunload', hangup);
+        
+        // 初期化
+        initPeer();
       </script>
     </body>
     </html>

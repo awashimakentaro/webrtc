@@ -110,7 +110,13 @@ export default function Home() {
 
               <Button
                 className="w-full"
-                onClick={() => (window.location.href = `/api/connect?room=${roomId}&mode=viewer`)}
+                onClick={() => {
+                  if (!roomId) {
+                    alert("ルームIDを入力してください")
+                    return
+                  }
+                  window.location.href = `/api/connect?room=${roomId}&mode=viewer`
+                }}
               >
                 接続開始
               </Button>
@@ -136,7 +142,13 @@ export default function Home() {
 
               <Button
                 className="w-full"
-                onClick={() => (window.location.href = `/api/connect?room=${roomId}&mode=camera`)}
+                onClick={() => {
+                  if (!roomId) {
+                    alert("ルームIDを入力してください")
+                    return
+                  }
+                  window.location.href = `/api/connect?room=${roomId}&mode=camera`
+                }}
               >
                 カメラを開始
               </Button>
