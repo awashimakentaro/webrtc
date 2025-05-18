@@ -116,11 +116,10 @@ export async function GET(request: NextRequest) {
     // PeerJSの初期化
     function initPeer() {
       try {
-        // ユニークなIDを生成
-        const randomSuffix = Math.random().toString(36).substring(2, 7);
+        // 予測可能なIDを使用（ランダムサフィックスなし）
         const peerId = mode === "camera" 
-          ? roomId + "-camera-" + randomSuffix
-          : roomId + "-viewer-" + randomSuffix;
+          ? roomId + "-camera"
+          : roomId + "-viewer";
         
         log("PeerJS初期化開始: " + peerId);
         
@@ -154,7 +153,7 @@ export async function GET(request: NextRequest) {
           } else if (mode === "viewer") {
             // 少し待ってからカメラに接続
             setTimeout(() => {
-              findAndConnectToCamera();
+              connectToCamera();
             }, 1000);
           }
         });
@@ -167,46 +166,88 @@ export async function GET(request: NextRequest) {
           if (err.type === 'peer-unavailable' && mode === 'viewer') {
             statusDiv.textContent = 'カメラが見つかりません。再試行中...';
             setTimeout(() => {
-              findAndConnectToCamera();
+              connectToCamera();
             }, 3000);
+          } else if (err.type === 'unavailable-id') {
+            // IDが既に使用されている場合、ランダムサフィックスを追加して再試行
+            log("IDが既に使用されています。ランダムIDで再試行します");
+            const randomSuffix = Math.random().toString(36).substring(2, 7);
+            const newPeerId = peerId + "-" + randomSuffix;
+            
+            statusDiv.textContent = '別のIDで再接続しています...';
+            
+            // 既存のピアを破棄
+            if (peer) {
+              peer.destroy();
+            }
+            
+            // 新しいIDで再初期化
+            setTimeout(() => {
+              peer = new Peer(newPeerId, {
+                debug: 2,
+                config: {
+                  'iceServers': [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' },
+                    { urls: 'stun:stun.stunprotocol.org:3478' },
+                    {
+                      urls: 'turn:openrelay.metered.ca:80',
+                      username: 'openrelayproject',
+                      credential: 'openrelayproject'
+                    }
+                  ]
+                }
+              });
+              
+              // イベントハンドラを再設定
+              setupPeerEventHandlers();
+            }, 1000);
           }
         });
         
-        // 着信処理（カメラモードの場合）
-        peer.on('call', (call) => {
-          log('着信がありました');
-          currentCall = call;
-          
-          if (localStream) {
-            call.answer(localStream);
-            log('着信に応答しました');
-            statusDiv.textContent = '視聴者と接続しました。映像を送信中...';
-            controls.classList.remove('hidden');
-          } else {
-            log('カメラが準備できていないため着信に応答できません');
-            statusDiv.textContent = 'カメラが準備できていません。';
-          }
-          
-          call.on('stream', (remoteStream) => {
-            log('リモートストリームを受信しました');
-            // カメラモードでは通常リモートストリームは使用しない
-          });
-          
-          call.on('close', () => {
-            log('通話が終了しました');
-            statusDiv.textContent = '通話が終了しました。';
-            controls.classList.add('hidden');
-          });
-          
-          call.on('error', (err) => {
-            log("通話エラー: " + err);
-            statusDiv.textContent = '通話エラー: ' + err;
-          });
-        });
+        setupPeerEventHandlers();
       } catch (err) {
         log("PeerJS初期化エラー: " + err.message);
         statusDiv.textContent = '初期化エラー: ' + err.message;
       }
+    }
+    
+    // ピアのイベントハンドラを設定
+    function setupPeerEventHandlers() {
+      // 着信処理（カメラモードの場合）
+      peer.on('call', (call) => {
+        log('着信がありました');
+        currentCall = call;
+        
+        if (localStream) {
+          call.answer(localStream);
+          log('着信に応答しました');
+          statusDiv.textContent = '視聴者と接続しました。映像を送信中...';
+          controls.classList.remove('hidden');
+        } else {
+          log('カメラが準備できていないため着信に応答できません');
+          statusDiv.textContent = 'カメラが準備できていません。';
+        }
+        
+        call.on('stream', (remoteStream) => {
+          log('リモートストリームを受信しました');
+          // カメラモードでは通常リモートストリームは使用しない
+        });
+        
+        call.on('close', () => {
+          log('通話が終了しました');
+          statusDiv.textContent = '通話が終了しました。';
+          controls.classList.add('hidden');
+        });
+        
+        call.on('error', (err) => {
+          log("通話エラー: " + err);
+          statusDiv.textContent = '通話エラー: ' + err;
+        });
+      });
     }
     
     // カメラの起動（カメラモード）
@@ -288,48 +329,23 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // カメラピアを検索して接続（視聴モード）
-    function findAndConnectToCamera() {
+    // カメラに接続（視聴モード）
+    function connectToCamera() {
       if (!peer || peer.disconnected) {
         log('ピア接続がありません。再初期化します');
         initPeer();
         return;
       }
       
-      log('カメラピアを検索中...');
-      statusDiv.textContent = 'カメラを探しています...';
-      
-      // 接続先のピアIDパターン
-      const targetPattern = roomId + "-camera-";
-      
-      // PeerJSはピア一覧を取得する機能がないため、
-      // 接続先のIDを予測して接続を試みる
-      try {
-        log("接続先: " + targetPattern + "*");
-        // 直接接続を試みる
-        connectToCamera(targetPattern);
-      } catch (err) {
-        log("接続試行エラー: " + err.message);
-        statusDiv.textContent = 'カメラへの接続に失敗しました。再試行します...';
-        
-        // 3秒後に再試行
-        setTimeout(() => {
-          findAndConnectToCamera();
-        }, 3000);
-      }
-    }
-    
-    // カメラに接続（視聴モード）
-    function connectToCamera(cameraIdPrefix) {
-      log("カメラ接続開始: " + cameraIdPrefix);
+      log('カメラに接続しています...');
       statusDiv.textContent = 'カメラに接続しています...';
       
       try {
         // 空のストリームで発信（受信のみモード）
         const emptyStream = new MediaStream();
         
-        // 接続先のIDを指定（完全なIDが分からない場合はエラーになる）
-        const cameraPeerId = cameraIdPrefix;
+        // 接続先のIDを指定
+        const cameraPeerId = roomId + "-camera";
         
         log("発信先: " + cameraPeerId);
         const call = peer.call(cameraPeerId, emptyStream);
@@ -365,7 +381,7 @@ export async function GET(request: NextRequest) {
         
         // エラー後に再試行
         setTimeout(() => {
-          findAndConnectToCamera();
+          connectToCamera();
         }, 3000);
       }
     }
