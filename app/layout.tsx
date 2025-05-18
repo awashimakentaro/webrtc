@@ -8,7 +8,6 @@ const inter = Inter({ subsets: ["latin"] })
 export const metadata = {
   title: "リモートカメラビューアー",
   description: "WebRTCを使用してスマートフォンカメラの映像をPCに表示するアプリケーション",
-    generator: 'v0.dev'
 }
 
 export default function RootLayout({
@@ -18,6 +17,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" suppressHydrationWarning>
+      <head>
+        <meta charSet="utf-8" />
+      </head>
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           {children}

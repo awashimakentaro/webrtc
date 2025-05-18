@@ -13,34 +13,40 @@ export async function GET(request: NextRequest) {
   return new NextResponse(
     `
     <!DOCTYPE html>
-    <html>
+    <html lang="ja">
     <head>
       <title>WebRTC Connection</title>
+      <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
-      <script src="https://unpkg.com/simple-peer@9.11.0/simplepeer.min.js"></script>
+      <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
       <style>
         body { margin: 0; font-family: sans-serif; }
         #status { padding: 20px; text-align: center; }
         video { width: 100%; height: 100vh; object-fit: cover; }
         .hidden { display: none; }
+        #debug { position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.5); color: white; padding: 5px; font-size: 12px; max-width: 80%; overflow: auto; max-height: 100px; }
       </style>
     </head>
     <body>
       <div id="status">接続中...</div>
       <video id="localVideo" autoplay playsinline muted class="hidden"></video>
       <video id="remoteVideo" autoplay playsinline class="hidden"></video>
+      <div id="debug"></div>
 
       <script>
+        // デバッグログ
+        const debugDiv = document.getElementById('debug');
+        function log(message) {
+          console.log(message);
+          debugDiv.innerHTML += message + '<br>';
+          debugDiv.scrollTop = debugDiv.scrollHeight;
+        }
+
         const roomId = "${roomId}";
         const mode = "${mode}";
-        
-        // シグナリングサーバーのURL（Vercelのデプロイ環境用）
-        const signalingServerUrl = "https://webrtc-signaling-server.onrender.com";
-        const socket = io(signalingServerUrl);
-        
         let peer;
         let localStream;
+        let conn;
 
         // ビデオ要素
         const localVideo = document.getElementById('localVideo');
@@ -59,9 +65,130 @@ export async function GET(request: NextRequest) {
 
         updateStatus("接続中...");
 
+        // PeerJSの初期化
+        function initPeer(userId) {
+          log('PeerJS初期化: ' + userId);
+          
+          peer = new Peer(userId, {
+            config: {
+              'iceServers': [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:stun.stunprotocol.org:3478' }
+              ]
+            },
+            debug: 2
+          });
+
+          peer.on('open', (id) => {
+            log('ピア接続確立: ' + id);
+            updateStatus("ピアサーバーに接続しました");
+            
+            if (mode === "camera") {
+              // カメラモードの場合は待機
+              updateStatus("視聴者からの接続を待機中...");
+            } else if (mode === "viewer") {
+              // 視聴モードの場合はカメラに接続
+              connectToCamera();
+            }
+          });
+
+          peer.on('error', (err) => {
+            log('ピアエラー: ' + err.type);
+            updateStatus("エラーが発生しました: " + err.type);
+          });
+
+          // 着信コールの処理
+          peer.on('call', (call) => {
+            log('着信コール受信');
+            updateStatus("着信コールを受信しました");
+            
+            // カメラモードの場合、ローカルストリームで応答
+            if (mode === "camera" && localStream) {
+              call.answer(localStream);
+              updateStatus("コールに応答しました");
+            } else {
+              call.answer();
+            }
+            
+            call.on('stream', (remoteStream) => {
+              log('リモートストリーム受信');
+              updateStatus("接続済み");
+              remoteVideo.srcObject = remoteStream;
+              remoteVideo.classList.remove('hidden');
+            });
+            
+            call.on('error', (err) => {
+              log('コールエラー: ' + err);
+              updateStatus("コールエラー: " + err);
+            });
+            
+            call.on('close', () => {
+              log('コール終了');
+              updateStatus("コールが終了しました");
+            });
+          });
+
+          // データ接続の処理
+          peer.on('connection', (dataConn) => {
+            conn = dataConn;
+            log('データ接続確立');
+            
+            conn.on('data', (data) => {
+              log('データ受信: ' + JSON.stringify(data));
+            });
+            
+            conn.on('close', () => {
+              log('データ接続終了');
+            });
+          });
+        }
+
+        // カメラに接続
+        function connectToCamera() {
+          const targetId = roomId + "-camera";
+          log('カメラに接続: ' + targetId);
+          updateStatus("カメラに接続中...");
+          
+          // データ接続
+          conn = peer.connect(targetId);
+          
+          conn.on('open', () => {
+            log('データ接続確立');
+            conn.send({ type: 'hello', message: 'ビューアーから接続しました' });
+            
+            // ビデオ通話
+            if (mode === "viewer") {
+              const call = peer.call(targetId, new MediaStream());
+              log('発信コール送信');
+              
+              call.on('stream', (remoteStream) => {
+                log('リモートストリーム受信');
+                updateStatus("接続済み");
+                remoteVideo.srcObject = remoteStream;
+                remoteVideo.classList.remove('hidden');
+              });
+              
+              call.on('error', (err) => {
+                log('コールエラー: ' + err);
+                updateStatus("コールエラー: " + err);
+              });
+            }
+          });
+          
+          conn.on('error', (err) => {
+            log('データ接続エラー: ' + err);
+            updateStatus("接続エラー: " + err);
+          });
+        }
+
         // カメラモードの場合はカメラを起動
         if (mode === "camera") {
           localVideo.classList.remove('hidden');
+          
           navigator.mediaDevices.getUserMedia({ 
             video: { 
               facingMode: { ideal: "environment" },
@@ -70,110 +197,28 @@ export async function GET(request: NextRequest) {
             }, 
             audio: true 
           })
-            .then(stream => {
-              localStream = stream;
-              localVideo.srcObject = stream;
-              updateStatus("カメラ準備完了、接続待機中...");
-              
-              socket.emit("join", roomId, "camera");
-              
-              socket.on("user-connected", ({ id, mode }) => {
-                if (mode === "viewer") {
-                  updateStatus("視聴者が接続しました。映像を送信中...");
-                  startPeer(id, stream, true);
-                }
-              });
-            })
-            .catch(err => {
-              updateStatus("カメラへのアクセスに失敗しました: " + err.message);
-              console.error("カメラエラー:", err);
-            });
+          .then(stream => {
+            localStream = stream;
+            localVideo.srcObject = stream;
+            log('カメラアクセス成功');
+            updateStatus("カメラ準備完了");
+            
+            // PeerJSの初期化
+            initPeer(roomId + "-camera");
+          })
+          .catch(err => {
+            log('カメラエラー: ' + err.message);
+            updateStatus("カメラへのアクセスに失敗しました: " + err.message);
+          });
         } 
         // 視聴モードの場合
         else if (mode === "viewer") {
           remoteVideo.classList.remove('hidden');
-          updateStatus("接続待機中...");
+          log('視聴モード開始');
           
-          socket.emit("join", roomId, "viewer");
-          
-          socket.on("user-connected", ({ id, mode }) => {
-            if (mode === "camera") {
-              updateStatus("カメラが接続されました。映像を受信中...");
-              startPeer(id, null, false);
-            }
-          });
+          // PeerJSの初期化
+          initPeer(roomId + "-viewer");
         }
-
-        // WebRTC接続の開始
-        function startPeer(id, stream, initiator) {
-          peer = new SimplePeer({
-            initiator: initiator,
-            stream: stream,
-            trickle: false,
-            config: {
-              iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' },
-                { urls: 'stun:stun.stunprotocol.org:3478' },
-                { 
-                  urls: 'turn:numb.viagenie.ca',
-                  username: 'webrtc@live.com',
-                  credential: 'muazkh'
-                }
-              ]
-            }
-          });
-
-          peer.on("signal", data => {
-            console.log("シグナル送信:", id);
-            socket.emit("signal", id, data);
-          });
-
-          peer.on("connect", () => {
-            updateStatus("接続済み");
-            console.log("ピア接続確立");
-          });
-
-          peer.on("stream", stream => {
-            console.log("ストリーム受信");
-            if (mode === "viewer") {
-              remoteVideo.srcObject = stream;
-            }
-          });
-
-          peer.on("error", err => {
-            updateStatus("エラーが発生しました: " + err.message);
-            console.error("ピアエラー:", err);
-          });
-
-          socket.on("signal", ({ from, signal }) => {
-            if (from === id) {
-              console.log("シグナル受信:", from);
-              peer.signal(signal);
-            }
-          });
-
-          socket.on("user-disconnected", userId => {
-            if (userId === id && peer) {
-              updateStatus("相手が切断しました。");
-              console.log("ユーザー切断:", userId);
-              peer.destroy();
-            }
-          });
-        }
-
-        // 接続状態のデバッグ
-        socket.on("connect", () => {
-          console.log("シグナリングサーバーに接続しました");
-        });
-
-        socket.on("connect_error", (err) => {
-          console.error("シグナリングサーバー接続エラー:", err);
-          updateStatus("シグナリングサーバーに接続できません");
-        });
 
         // ページを離れる前に接続を閉じる
         window.onbeforeunload = () => {
@@ -183,7 +228,6 @@ export async function GET(request: NextRequest) {
           if (peer) {
             peer.destroy();
           }
-          socket.disconnect();
         };
       </script>
     </body>
@@ -191,7 +235,7 @@ export async function GET(request: NextRequest) {
   `,
     {
       headers: {
-        "Content-Type": "text/html",
+        "Content-Type": "text/html; charset=utf-8",
       },
     },
   )

@@ -171,7 +171,7 @@ export default function Home() {
                     接続状態:{" "}
                     <span
                       className={
-                        connectionStatus === "接続済み"
+                        connectionStatus === "接��済み"
                           ? "text-green-500"
                           : connectionStatus === "接続中..."
                             ? "text-amber-500"
