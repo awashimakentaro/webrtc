@@ -231,17 +231,29 @@ export async function GET(request: NextRequest) {
         currentCall = call;
         
         if (localStream) {
-          call.answer(localStream);
-          log('着信に応答しました');
-          
-          // ローカルストリーム情報をログに記録
+          // ストリーム情報を詳細にログ
           const videoTracks = localStream.getVideoTracks();
           const audioTracks = localStream.getAudioTracks();
-          log(\`送信ストリーム情報: ビデオトラック \${videoTracks.length}個, オーディオトラック \${audioTracks.length}個\`);
+          log(\`送信前ストリーム情報: ビデオトラック \${videoTracks.length}個, オーディオトラック \${audioTracks.length}個\`);
           
           if (videoTracks.length > 0) {
-            log(\`ビデオトラック: \${videoTracks[0].label}, 有効: \${videoTracks[0].enabled}, 状態: \${videoTracks[0].readyState}\`);
+            const track = videoTracks[0];
+            log(\`送信ビデオトラック: \${track.label}, 有効: \${track.enabled}, 状態: \${track.readyState}\`);
+            
+            // トラックが無効になっていたら有効にする
+            if (!track.enabled) {
+              log('ビデオトラックを有効化します');
+              track.enabled = true;
+            }
+            
+            // トラックの設定を取得
+            const settings = track.getSettings();
+            log(\`送信ビデオ設定: \${settings.width}x\${settings.height}@\${settings.frameRate}fps, デバイスID: \${settings.deviceId}\`);
           }
+          
+          // 着信に応答
+          call.answer(localStream);
+          log('着信に応答しました');
           
           statusDiv.textContent = '視聴者と接続しました。映像を送信中...';
           controls.classList.remove('hidden');
@@ -249,8 +261,28 @@ export async function GET(request: NextRequest) {
           // ICE接続状態の監視を追加
           call.on('iceStateChanged', (state) => {
             log(\`ICE接続状態変更: \${state}\`);
-            if (state === 'failed' || state === 'disconnected') {
+            
+            // 接続状態に応じたメッセージを表示
+            if (state === 'checking') {
+              statusDiv.textContent = 'ネットワーク接続を確認中...';
+            } else if (state === 'connected' || state === 'completed') {
+              statusDiv.textContent = '視聴者と接続しました。映像を送信中...';
+            } else if (state === 'failed' || state === 'disconnected') {
               statusDiv.textContent = 'ネットワーク接続に問題があります。';
+            }
+            
+            // PeerConnectionの状態を詳細にログ
+            if (call.peerConnection) {
+              const pc = call.peerConnection;
+              log(\`PeerConnection状態: \${pc.connectionState}, ICE状態: \${pc.iceConnectionState}, シグナリング状態: \${pc.signalingState}\`);
+              
+              // 送信トラックの状態を確認
+              const senders = pc.getSenders();
+              senders.forEach(sender => {
+                if (sender.track && sender.track.kind === 'video') {
+                  log(\`送信中ビデオトラック: \${sender.track.label || 'ラベルなし'}, 有効: \${sender.track.enabled}, 状態: \${sender.track.readyState}\`);
+                }
+              });
             }
           });
         } else {
@@ -413,6 +445,12 @@ export async function GET(request: NextRequest) {
             log(\`ビデオトラック: \${videoTracks[0].label}, 有効: \${videoTracks[0].enabled}, 状態: \${videoTracks[0].readyState}\`);
           }
           
+          // ビデオ要素のスタイルを明示的に設定
+          remoteVideo.style.display = 'block';
+          remoteVideo.style.width = '100%';
+          remoteVideo.style.height = '100vh';
+          remoteVideo.style.objectFit = 'cover';
+          
           // ビデオ要素にストリームを設定
           remoteVideo.srcObject = remoteStream;
           remoteVideo.classList.remove('hidden');
@@ -420,7 +458,7 @@ export async function GET(request: NextRequest) {
           // 自動再生に失敗した場合に備えて手動で再生を試みる
           remoteVideo.play().catch(err => {
             log(\`ビデオ再生エラー: \${err.message}\`);
-            statusDiv.textContent = 'ビデオの自動再生に失敗しました。画面をタップしてください。';
+            statusDiv.textContent = 'ビデオの自動再生に失敗しました。下のボタンをタップしてください。';
             
             // ユーザーのインタラクションで再生を試みるためのボタンを表示
             const playButton = document.createElement('button');
@@ -431,13 +469,20 @@ export async function GET(request: NextRequest) {
             playButton.style.transform = 'translate(-50%, -50%)';
             playButton.style.zIndex = '1000';
             playButton.style.padding = '16px 32px';
+            playButton.style.backgroundColor = '#000';
+            playButton.style.color = '#fff';
+            playButton.style.border = 'none';
+            playButton.style.borderRadius = '8px';
+            playButton.style.fontWeight = 'bold';
             
             playButton.onclick = () => {
               remoteVideo.play().then(() => {
                 log('手動再生成功');
                 document.body.removeChild(playButton);
+                statusDiv.textContent = 'カメラと接続しました。映像を受信中...';
               }).catch(e => {
                 log(\`手動再生失敗: \${e.message}\`);
+                statusDiv.textContent = '再生に失敗しました: ' + e.message;
               });
             };
             
@@ -450,7 +495,13 @@ export async function GET(request: NextRequest) {
         // ICE接続状態の監視を追加
         call.on('iceStateChanged', (state) => {
           log(\`ICE接続状態変更: \${state}\`);
-          if (state === 'failed' || state === 'disconnected') {
+          
+          // 接続状態に応じたメッセージを表示
+          if (state === 'checking') {
+            statusDiv.textContent = 'ネットワーク接続を確認中...';
+          } else if (state === 'connected' || state === 'completed') {
+            statusDiv.textContent = 'カメラと接続しました。映像を受信中...';
+          } else if (state === 'failed' || state === 'disconnected') {
             statusDiv.textContent = 'ネットワーク接続に問題があります。再接続を試みています...';
             // 再接続を試みる
             setTimeout(() => {
@@ -460,8 +511,22 @@ export async function GET(request: NextRequest) {
               }
               connectToCamera();
             }, 3000);
-        }
-      });
+          }
+          
+          // PeerConnectionの状態を詳細にログ
+          if (call.peerConnection) {
+            const pc = call.peerConnection;
+            log(\`PeerConnection状態: \${pc.connectionState}, ICE状態: \${pc.iceConnectionState}, シグナリング状態: \${pc.signalingState}\`);
+            
+            // 受信トラックの状態を確認
+            const receivers = pc.getReceivers();
+            receivers.forEach(receiver => {
+              if (receiver.track && receiver.track.kind === 'video') {
+                log(\`受信ビデオトラック: \${receiver.track.label || 'ラベルなし'}, 有効: \${receiver.track.enabled}, 状態: \${receiver.track.readyState}\`);
+              }
+            });
+          }
+        });
         
         call.on('close', () => {
           log('通話終了');
