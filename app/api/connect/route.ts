@@ -163,6 +163,25 @@ export async function GET(request: NextRequest) {
         .hidden {
           display: none !important;
         }
+        
+        .connection-indicator {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          width: 15px;
+          height: 15px;
+          border-radius: 50%;
+          background-color: red;
+          z-index: 100;
+        }
+        
+        .connection-indicator.connected {
+          background-color: green;
+        }
+        
+        .connection-indicator.connecting {
+          background-color: orange;
+        }
       </style>
     </head>
     <body>
@@ -174,6 +193,7 @@ export async function GET(request: NextRequest) {
           <div id="remote-video-container" class="${mode === "camera" ? "hidden" : ""}">
             <video id="remote-video" autoplay playsinline></video>
           </div>
+          <div class="connection-indicator" id="connection-indicator"></div>
         </div>
         
         <div id="camera-info" class="${mode === "viewer" ? "hidden" : ""}"></div>
@@ -209,6 +229,7 @@ export async function GET(request: NextRequest) {
         const torchBtn = document.getElementById('torch-btn');
         const cameraInfo = document.getElementById('camera-info');
         const cameraSelect = document.getElementById('camera-select');
+        const connectionIndicator = document.getElementById('connection-indicator');
         
         // デバッグ表示の切り替え
         debugBtn.addEventListener('click', () => {
@@ -219,6 +240,9 @@ export async function GET(request: NextRequest) {
         reconnectBtn.addEventListener('click', () => {
           location.reload();
         });
+        
+        // 初期状態ではデバッグを表示
+        debugPanel.style.display = 'block';
         
         // ログ関数
         function log(message) {
@@ -234,15 +258,26 @@ export async function GET(request: NextRequest) {
         const embedded = ${embedded};
         let peer;
         let localStream;
+        let remoteStream;
         let connection;
         let currentFacingMode = "environment"; // デフォルトは背面カメラ
         let torchAvailable = false;
         let torchOn = false;
+        let activeCall = null;
         
         // 接続状態を親ウィンドウに通知
         function updateStatus(status) {
           statusBar.textContent = status;
           log('ステータス更新: ' + status);
+          
+          // 接続状態インジケーターの更新
+          if (status.includes('接続済み')) {
+            connectionIndicator.className = 'connection-indicator connected';
+          } else if (status.includes('接続中')) {
+            connectionIndicator.className = 'connection-indicator connecting';
+          } else {
+            connectionIndicator.className = 'connection-indicator';
+          }
           
           // 埋め込みモードの場合、親ウィンドウに通知
           if (embedded && window.parent) {
@@ -357,8 +392,8 @@ export async function GET(request: NextRequest) {
             // 接続中の場合は再接続
             if (peer && peer.open) {
               // 既存の接続を閉じる
-              if (peer) {
-                peer.destroy();
+              if (activeCall) {
+                activeCall.close();
               }
               
               // 再接続
@@ -406,6 +441,39 @@ export async function GET(request: NextRequest) {
         
         // カメラ切り替えボタンのイベント
         switchCameraBtn.addEventListener('click', () => switchCamera());
+        
+        // ICE接続状態の監視
+        function monitorIceConnectionState(pc) {
+          if (!pc) return;
+          
+          pc.oniceconnectionstatechange = () => {
+            log('ICE接続状態変更: ' + pc.iceConnectionState);
+            
+            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+              updateStatus('ICE接続確立');
+            } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+              updateStatus('ICE接続失敗');
+              
+              // 再接続を試みる
+              if (mode === 'viewer') {
+                log('ICE接続失敗 - 再接続を試みます');
+                setTimeout(() => {
+                  if (peer && peer.open) {
+                    connectToCamera();
+                  }
+                }, 2000);
+              }
+            }
+          };
+          
+          pc.onicegatheringstatechange = () => {
+            log('ICE収集状態変更: ' + pc.iceGatheringState);
+          };
+          
+          pc.onsignalingstatechange = () => {
+            log('シグナリング状態変更: ' + pc.signalingState);
+          };
+        }
         
         // 単純化されたPeerJS実装
         function startConnection() {
@@ -472,10 +540,23 @@ export async function GET(request: NextRequest) {
               log('着信コール受信');
               updateStatus('着信コールを受信しました');
               
+              // 既存のコールがあれば閉じる
+              if (activeCall) {
+                activeCall.close();
+              }
+              
+              // 新しいコールを保存
+              activeCall = call;
+              
               // ローカルストリームで応答
               call.answer(localStream);
               log('ローカルストリームで応答');
               updateStatus('コールに応答しました');
+              
+              // ICE接続状態の監視
+              if (call.peerConnection) {
+                monitorIceConnectionState(call.peerConnection);
+              }
               
               // リモートストリーム受信時の処理
               call.on('stream', stream => {
@@ -493,6 +574,7 @@ export async function GET(request: NextRequest) {
               call.on('close', () => {
                 log('コール終了');
                 updateStatus('コールが終了しました');
+                activeCall = null;
               });
             });
             
@@ -550,9 +632,20 @@ export async function GET(request: NextRequest) {
             // pingを送信
             connection.send({ type: 'ping', timestamp: Date.now() });
             
+            // 既存のコールがあれば閉じる
+            if (activeCall) {
+              activeCall.close();
+            }
+            
             // カメラからのビデオストリームを要求
             const call = peer.call(targetId, new MediaStream());
+            activeCall = call;
             log('発信コール送信');
+            
+            // ICE接続状態の監視
+            if (call.peerConnection) {
+              monitorIceConnectionState(call.peerConnection);
+            }
             
             // リモートストリーム受信時の処理
             call.on('stream', stream => {
@@ -566,13 +659,40 @@ export async function GET(request: NextRequest) {
                 log(\`トラック\${i+1}: \${track.kind} - \${track.readyState}\`);
               });
               
+              // リモートストリームを保存
+              remoteStream = stream;
+              
               // ビデオ要素にストリームをセット
               remoteVideo.srcObject = stream;
               
               // ビデオの読み込みイベント
               remoteVideo.onloadedmetadata = () => {
                 log('ビデオメタデータ読み込み完了');
-                remoteVideo.play().catch(e => log('ビデオ再生エラー: ' + e));
+                
+                // ビデオ要素のスタイルを強制的に設定
+                remoteVideo.style.width = '100%';
+                remoteVideo.style.height = '100%';
+                remoteVideo.style.objectFit = 'contain';
+                
+                // ビデオ再生
+                remoteVideo.play().catch(e => {
+                  log('ビデオ再生エラー: ' + e);
+                  
+                  // 自動再生ポリシーによるエラーの場合、ユーザー操作を待つ
+                  if (e.name === 'NotAllowedError') {
+                    log('自動再生が許可されていません。ユーザー操作を待ちます。');
+                    
+                    // 画面タップで再生を試みる
+                    document.addEventListener('click', () => {
+                      remoteVideo.play().catch(err => log('再試行エラー: ' + err));
+                    }, { once: true });
+                  }
+                });
+              };
+              
+              // エラーイベント
+              remoteVideo.onerror = (e) => {
+                log('ビデオエラー: ' + e);
               };
             });
             
@@ -586,6 +706,7 @@ export async function GET(request: NextRequest) {
             call.on('close', () => {
               log('コール終了');
               updateStatus('コールが終了しました');
+              activeCall = null;
             });
           });
           
@@ -629,7 +750,26 @@ export async function GET(request: NextRequest) {
             // ビデオの読み込みイベント
             localVideo.onloadedmetadata = () => {
               log('ローカルビデオメタデータ読み込み完了');
-              localVideo.play().catch(e => log('ローカルビデオ再生エラー: ' + e));
+              
+              // ビデオ要素のスタイルを強制的に設定
+              localVideo.style.width = '100%';
+              localVideo.style.height = '100%';
+              localVideo.style.objectFit = 'contain';
+              
+              // ビデオ再生
+              localVideo.play().catch(e => {
+                log('ローカルビデオ再生エラー: ' + e);
+                
+                // 自動再生ポリシーによるエラーの場合、ユーザー操作を待つ
+                if (e.name === 'NotAllowedError') {
+                  log('自動再生が許可されていません。ユーザー操作を待ちます。');
+                  
+                  // 画面タップで再生を試みる
+                  document.addEventListener('click', () => {
+                    localVideo.play().catch(err => log('再試行エラー: ' + err));
+                  }, { once: true });
+                }
+              });
             };
             
             // ストリームの内容をログ
@@ -702,6 +842,46 @@ export async function GET(request: NextRequest) {
             // ビデオ要素の表示を確認
             log(\`ローカルビデオ表示状態: \${window.getComputedStyle(localVideo).display}\`);
           }, 1000);
+        }
+        
+        // 視聴モードでの追加対策
+        if (mode === 'viewer') {
+          // 定期的に接続状態を確認
+          setInterval(() => {
+            if (activeCall && activeCall.peerConnection) {
+              const state = activeCall.peerConnection.iceConnectionState;
+              log('ICE接続状態確認: ' + state);
+              
+              // 接続が切断された場合は再接続
+              if (state === 'disconnected' || state === 'failed') {
+                log('接続が切断されました。再接続を試みます。');
+                connectToCamera();
+              }
+            }
+          }, 10000);
+          
+          // ビデオ要素の表示を確認
+          setTimeout(() => {
+            if (remoteVideo) {
+              const videoWidth = remoteVideoContainer.clientWidth;
+              const videoHeight = remoteVideoContainer.clientHeight;
+              log(\`リモートビデオコンテナサイズ: \${videoWidth}x\${videoHeight}\`);
+              
+              // ビデオ要素のスタイルを強制的に設定
+              remoteVideo.style.width = '100%';
+              remoteVideo.style.height = '100%';
+              remoteVideo.style.objectFit = 'contain';
+              
+              // ビデオ要素の表示を確認
+              log(\`リモートビデオ表示状態: \${window.getComputedStyle(remoteVideo).display}\`);
+              
+              // ビデオが再生されていない場合は再生を試みる
+              if (remoteVideo.paused && remoteVideo.srcObject) {
+                log('リモートビデオが一時停止中です。再生を試みます。');
+                remoteVideo.play().catch(e => log('リモートビデオ再生エラー: ' + e));
+              }
+            }
+          }, 3000);
         }
       </script>
     </body>
