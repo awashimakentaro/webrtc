@@ -5,23 +5,21 @@ export async function GET(request: NextRequest) {
   const roomId = searchParams.get("room")
   const mode = searchParams.get("mode")
   const embedded = searchParams.get("embedded") === "true"
-  const fallback = searchParams.get("fallback") === "true"
 
   if (!roomId || !mode) {
     return NextResponse.json({ error: "Room ID and mode are required" }, { status: 400 })
   }
 
-  // WebRTCクライアントコードを含むHTMLを返す
+  // 最適化されたデータチャネル + 画像転送方式のHTMLを返す
   return new NextResponse(
     `
     <!DOCTYPE html>
     <html lang="ja">
     <head>
-      <title>WebRTC Connection</title>
+      <title>リモートカメラ接続</title>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale: 1.0">
       <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-      <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
       <style>
         * {
           box-sizing: border-box;
@@ -52,11 +50,11 @@ export async function GET(request: NextRequest) {
           overflow: hidden;
           width: 100%;
           height: 100vh;
-          max-height: calc(100vh - 40px); /* ステータスバーの高さを考慮 */
+          max-height: calc(100vh - 40px);
         }
         
         #local-video-container,
-        #remote-video-container {
+        #remote-image-container {
           position: absolute;
           top: 0;
           left: 0;
@@ -69,15 +67,20 @@ export async function GET(request: NextRequest) {
           justify-content: center;
         }
         
-        #local-video,
-        #remote-video {
+        #local-video {
           width: 100%;
           height: 100%;
           object-fit: cover;
           background-color: #000;
         }
         
-        /* ステータスバーを下部に固定し、高さを制限 */
+        #remote-image {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          background-color: #000;
+        }
+        
         #status-bar {
           position: absolute;
           bottom: 0;
@@ -93,7 +96,6 @@ export async function GET(request: NextRequest) {
           line-height: 20px;
         }
         
-        /* デバッグパネルを右下に配置し、サイズを制限 */
         #debug-panel {
           position: fixed;
           bottom: 40px;
@@ -111,7 +113,6 @@ export async function GET(request: NextRequest) {
           opacity: 0.7;
         }
         
-        /* コントロールパネルを下部に配置し、ステータスバーと重ならないように */
         #control-panel {
           position: absolute;
           bottom: 50px;
@@ -145,7 +146,6 @@ export async function GET(request: NextRequest) {
           cursor: not-allowed;
         }
         
-        /* カメラ情報を左上に配置し、サイズを制限 */
         #camera-info {
           position: absolute;
           top: 10px;
@@ -156,11 +156,10 @@ export async function GET(request: NextRequest) {
           font-size: 10px;
           z-index: 95;
           border-radius: 5px;
-          max-width: 150px;
+          max-width: 200px;
           opacity: 0.7;
         }
         
-        /* カメラコントロールを右上に配置 */
         #camera-controls {
           position: absolute;
           top: 10px;
@@ -184,7 +183,6 @@ export async function GET(request: NextRequest) {
           display: none !important;
         }
         
-        /* 接続インジケーターを右上に配置し、サイズを小さく */
         .connection-indicator {
           position: absolute;
           top: 10px;
@@ -204,64 +202,37 @@ export async function GET(request: NextRequest) {
           background-color: orange;
         }
         
-        /* 代替接続モードのコンテナを中央に配置 */
-        #fallback-container {
+        #performance-stats {
           position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          text-align: center;
-          color: white;
-          z-index: 90;
-          display: none;
-          background: rgba(0,0,0,0.7);
-          padding: 20px;
-          border-radius: 10px;
-        }
-        
-        #fallback-container.active {
-          display: block;
-        }
-        
-        #fallback-qr {
-          margin: 20px auto;
-          padding: 10px;
-          background: white;
-          border-radius: 5px;
-          width: 220px;
-          height: 220px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        
-        #fallback-image {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          display: block;
-          margin: 0;
-          border: none;
-          border-radius: 0;
-        }
-        
-        /* デバッグボタンを右下に固定 */
-        #debug-btn {
-          position: fixed;
           bottom: 40px;
-          right: 10px;
-          z-index: 100;
-          font-size: 12px;
-          padding: 5px 10px;
-          opacity: 0.5;
-          min-width: auto;
+          left: 10px;
+          background: rgba(0,0,0,0.5);
+          color: white;
+          padding: 5px;
+          font-size: 10px;
+          z-index: 95;
+          border-radius: 5px;
+          max-width: 200px;
+          opacity: 0.7;
         }
         
-        /* カメラモードのボタンサイズを調整 */
-        #camera-controls .btn {
+        #quality-controls {
+          position: absolute;
+          top: 50px;
+          right: 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+          z-index: 95;
+        }
+        
+        #quality-select {
+          background: rgba(0,0,0,0.5);
+          color: white;
+          border: 1px solid rgba(255,255,255,0.3);
+          border-radius: 5px;
+          padding: 5px;
           font-size: 12px;
-          padding: 5px 10px;
-          min-width: auto;
         }
         
         /* 小さい画面用の調整 */
@@ -289,9 +260,8 @@ export async function GET(request: NextRequest) {
           <div id="local-video-container" class="${mode === "viewer" ? "hidden" : ""}">
             <video id="local-video" autoplay playsinline muted></video>
           </div>
-          <div id="remote-video-container" class="${mode === "camera" ? "hidden" : ""}">
-            <video id="remote-video" autoplay playsinline></video>
-            <img id="fallback-image" class="hidden" alt="カメラ映像" />
+          <div id="remote-image-container" class="${mode === "camera" ? "hidden" : ""}">
+            <img id="remote-image" alt="カメラ映像" />
           </div>
           <div class="connection-indicator" id="connection-indicator"></div>
         </div>
@@ -304,22 +274,24 @@ export async function GET(request: NextRequest) {
           <select id="camera-select" class="hidden"></select>
         </div>
         
+        <div id="quality-controls" class="${mode === "camera" ? "" : "hidden"}">
+          <select id="quality-select">
+            <option value="high">高品質 (低FPS)</option>
+            <option value="medium" selected>標準 (中FPS)</option>
+            <option value="low">低品質 (高FPS)</option>
+          </select>
+        </div>
+        
         <div id="control-panel">
           <button id="reconnect-btn" class="btn">再接続</button>
-          <button id="fallback-btn" class="btn">代替接続</button>
           <button id="fit-toggle-btn" class="btn">表示切替</button>
         </div>
         
-        <button id="debug-btn" class="btn">デバッグ</button>
+        <button id="debug-btn" class="btn" style="position: fixed; bottom: 40px; right: 10px; z-index: 100; font-size: 12px; padding: 5px 10px; opacity: 0.5; min-width: auto;">デバッグ</button>
         
         <div id="status-bar">接続中...</div>
         <div id="debug-panel"></div>
-        
-        <div id="fallback-container">
-          <h3>代替接続モード</h3>
-          <p>WebRTC接続に問題があります。<br>代替接続を試みます。</p>
-          <div id="fallback-qr"></div>
-        </div>
+        <div id="performance-stats"></div>
       </div>
 
       <script>
@@ -327,24 +299,21 @@ export async function GET(request: NextRequest) {
         const app = document.getElementById('app');
         const videoContainer = document.getElementById('video-container');
         const localVideoContainer = document.getElementById('local-video-container');
-        const remoteVideoContainer = document.getElementById('remote-video-container');
+        const remoteImageContainer = document.getElementById('remote-image-container');
         const localVideo = document.getElementById('local-video');
-        const remoteVideo = document.getElementById('remote-video');
-        const fallbackImage = document.getElementById('fallback-image');
+        const remoteImage = document.getElementById('remote-image');
         const statusBar = document.getElementById('status-bar');
         const debugPanel = document.getElementById('debug-panel');
         const debugBtn = document.getElementById('debug-btn');
         const reconnectBtn = document.getElementById('reconnect-btn');
-        const fallbackBtn = document.getElementById('fallback-btn');
         const switchCameraBtn = document.getElementById('switch-camera-btn');
         const torchBtn = document.getElementById('torch-btn');
         const cameraInfo = document.getElementById('camera-info');
         const cameraSelect = document.getElementById('camera-select');
         const connectionIndicator = document.getElementById('connection-indicator');
-        const fallbackContainer = document.getElementById('fallback-container');
-        const fallbackQr = document.getElementById('fallback-qr');
-        
         const fitToggleBtn = document.getElementById('fit-toggle-btn');
+        const performanceStats = document.getElementById('performance-stats');
+        const qualitySelect = document.getElementById('quality-select');
 
         // 表示切替ボタンのイベントリスナー
         fitToggleBtn.addEventListener('click', toggleVideoFit);
@@ -357,11 +326,6 @@ export async function GET(request: NextRequest) {
         // 再接続ボタン
         reconnectBtn.addEventListener('click', () => {
           location.reload();
-        });
-        
-        // 代替接続ボタン
-        fallbackBtn.addEventListener('click', () => {
-          activateFallbackMode();
         });
         
         // 初期状態ではデバッグを表示（問題診断のため）
@@ -379,20 +343,54 @@ export async function GET(request: NextRequest) {
         const roomId = "${roomId}";
         const mode = "${mode}";
         const embedded = ${embedded};
-        const initialFallback = ${fallback};
         let peer;
         let localStream;
-        let remoteStream;
         let connection;
         let currentFacingMode = "environment"; // デフォルトは背面カメラ
         let torchAvailable = false;
         let torchOn = false;
-        let activeCall = null;
-        let connectionTimeout;
-        let usingFallbackMode = initialFallback;
-        let fallbackInterval;
-        let iceConnectionCheckInterval;
         let connectionStartTime = Date.now();
+        let frameCount = 0;
+        let lastFpsUpdate = Date.now();
+        let fps = 0;
+        let totalBytesTransferred = 0;
+        let lastBytesUpdate = Date.now();
+        let bytesPerSecond = 0;
+        let frameInterval = 100; // デフォルトは10fps
+        let imageQuality = 0.7; // デフォルトの画質
+        let imageResolution = { width: 640, height: 480 }; // デフォルトの解像度
+        let frameIntervalId = null;
+        
+        // 品質設定の変更イベント
+        qualitySelect.addEventListener('change', () => {
+          const quality = qualitySelect.value;
+          
+          switch(quality) {
+            case 'high':
+              frameInterval = 200; // 5fps
+              imageQuality = 0.9;
+              imageResolution = { width: 1280, height: 720 };
+              break;
+            case 'medium':
+              frameInterval = 100; // 10fps
+              imageQuality = 0.7;
+              imageResolution = { width: 640, height: 480 };
+              break;
+            case 'low':
+              frameInterval = 50; // 20fps
+              imageQuality = 0.5;
+              imageResolution = { width: 480, height: 360 };
+              break;
+          }
+          
+          log(\`品質設定変更: \${quality}, FPS: \${1000/frameInterval}, 品質: \${imageQuality}, 解像度: \${imageResolution.width}x\${imageResolution.height}\`);
+          
+          // フレーム送信を再開
+          if (mode === 'camera') {
+            stopFrameSending();
+            startFrameSending();
+          }
+        });
         
         // 接続状態を親ウィンドウに通知
         function updateStatus(status) {
@@ -433,9 +431,22 @@ export async function GET(request: NextRequest) {
                 カメラ: \${videoTrack.label.substring(0, 20)}...<br>
                 解像度: \${settings.width}x\${settings.height}<br>
                 向き: \${currentFacingMode === 'environment' ? '背面' : '前面'}<br>
-                ライト: \${torchAvailable ? (torchOn ? 'ON' : 'OFF') : '非対応'}
+                ライト: \${torchAvailable ? (torchOn ? 'ON' : 'OFF') : '非対応'}<br>
+                FPS: \${fps}<br>
+                転送速度: \${(bytesPerSecond / 1024).toFixed(1)} KB/s
               \`;
             }
+          }
+        }
+        
+        // パフォーマンス情報を更新
+        function updatePerformanceStats() {
+          if (mode === 'viewer') {
+            performanceStats.innerHTML = \`
+              FPS: \${fps}<br>
+              受信速度: \${(bytesPerSecond / 1024).toFixed(1)} KB/s<br>
+              総受信量: \${(totalBytesTransferred / (1024 * 1024)).toFixed(2)} MB
+            \`;
           }
         }
         
@@ -486,10 +497,10 @@ export async function GET(request: NextRequest) {
           const newConstraints = constraints || {
             video: { 
               facingMode: { exact: currentFacingMode === 'environment' ? 'user' : 'environment' },
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
+              width: { ideal: imageResolution.width },
+              height: { ideal: imageResolution.height }
             },
-            audio: true
+            audio: false // 音声は不要
           };
           
           try {
@@ -518,15 +529,10 @@ export async function GET(request: NextRequest) {
             
             log(\`カメラを切り替えました: \${currentFacingMode}\`);
             
-            // 接続中の場合は再接続
-            if (peer && peer.open && !usingFallbackMode) {
-              // 既存の接続を閉じる
-              if (activeCall) {
-                activeCall.close();
-              }
-              
-              // 再接続
-              startConnection();
+            // フレーム送信を再開
+            if (mode === 'camera') {
+              stopFrameSending();
+              startFrameSending();
             }
           } catch (err) {
             log('カメラ切り替えエラー: ' + err);
@@ -572,178 +578,17 @@ export async function GET(request: NextRequest) {
         // カメラ切り替えボタンのイベント
         switchCameraBtn.addEventListener('click', () => switchCamera());
         
-        // ICE接続状態の監視
-        function monitorIceConnectionState(pc) {
-          if (!pc) return;
-          
-          // ICE接続状態の変化を監視
-          pc.oniceconnectionstatechange = () => {
-            log('ICE接続状態変更: ' + pc.iceConnectionState);
-            
-            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-              updateStatus('ICE接続確立');
-              clearTimeout(connectionTimeout);
-              
-              // ICE接続が確立したらインターバルをクリア
-              clearInterval(iceConnectionCheckInterval);
-            } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-              updateStatus('ICE接続失敗');
-              
-              // 再接続を試みる
-              if (mode === 'viewer') {
-                log('ICE接続失敗 - 再接続を試みます');
-                setTimeout(() => {
-                  if (peer && peer.open) {
-                    connectToCamera();
-                  }
-                }, 2000);
-              }
-            }
-          };
-          
-          // ICE候補の詳細ログを追加
-          pc.onicecandidate = (event) => {
-            if (event.candidate) {
-              log('ICE候補追加: ' + JSON.stringify({
-                type: event.candidate.type,
-                protocol: event.candidate.protocol,
-                address: event.candidate.address,
-                port: event.candidate.port,
-                priority: event.candidate.priority,
-                foundation: event.candidate.foundation,
-                component: event.candidate.component,
-                relatedAddress: event.candidate.relatedAddress,
-                relatedPort: event.candidate.relatedPort
-              }));
-            } else {
-              log('ICE候補収集完了');
-            }
-          };
-          
-          // ICE収集状態の変化を監視
-          pc.onicegatheringstatechange = () => {
-            log('ICE収集状態変更: ' + pc.iceGatheringState);
-          };
-          
-          // 接続状態の変化を監視
-          pc.onconnectionstatechange = () => {
-            log('接続状態変更: ' + pc.connectionState);
-            
-            if (pc.connectionState === 'connected') {
-              updateStatus('接続確立');
-              clearTimeout(connectionTimeout);
-            } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-              updateStatus('接続失敗');
-              
-              // 一定時間後に代替接続モードに切り替え
-              if (mode === 'viewer' && !usingFallbackMode) {
-                log('接続失敗 - 代替接続モードに切り替えます');
-                setTimeout(() => {
-                  activateFallbackMode();
-                }, 3000);
-              }
-            }
-          };
-          
-          // シグナリング状態の変化を監視
-          pc.onsignalingstatechange = () => {
-            log('シグナリング状態変更: ' + pc.signalingState);
-          };
-          
-          // トラック追加イベントの監視
-          pc.ontrack = (event) => {
-            log('トラック追加: ' + event.track.kind);
-            
-            if (event.track.kind === 'video') {
-              log('ビデオトラック受信');
-              
-              // ストリームの詳細をログ
-              const streams = event.streams;
-              if (streams && streams.length > 0) {
-                log(\`受信したストリーム数: \${streams.length}\`);
-                streams.forEach((stream, i) => {
-                  const tracks = stream.getTracks();
-                  log(\`ストリーム\${i+1}のトラック数: \${tracks.length}\`);
-                  tracks.forEach((track, j) => {
-                    log(\`ストリーム\${i+1}のトラック\${j+1}: \${track.kind} - \${track.readyState}\`);
-                  });
-                });
-              }
-            }
-          };
-          
-          // 接続統計情報の定期的な収集
-          if (mode === 'viewer') {
-            const statsInterval = setInterval(() => {
-              if (pc.connectionState === 'connected') {
-                pc.getStats().then(stats => {
-                  stats.forEach(report => {
-                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
-                      log('受信統計: フレーム数=' + report.framesReceived + 
-                          ', デコード数=' + report.framesDecoded + 
-                          ', 破棄数=' + report.framesDropped);
-                    }
-                  });
-                });
-              } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-                clearInterval(statsInterval);
-              }
-            }, 5000);
-          }
-          
-          // ICE接続状態が進行しない場合のチェック
-          clearInterval(iceConnectionCheckInterval);
-          iceConnectionCheckInterval = setInterval(() => {
-            if (pc.iceConnectionState === 'new' || pc.iceConnectionState === 'checking') {
-              log('ICE接続が進行していません: ' + pc.iceConnectionState);
-              
-              // ICE候補の収集状態を確認
-              log('ICE収集状態: ' + pc.iceGatheringState);
-              
-              // 接続状態を確認
-              log('接続状態: ' + pc.connectionState);
-              
-              // シグナリング状態を確認
-              log('シグナリング状態: ' + pc.signalingState);
-              
-              // ICE候補の数を確認
-              pc.getStats().then(stats => {
-                let localCandidates = 0;
-                let remoteCandidates = 0;
-                let icePairs = 0;
-                
-                stats.forEach(report => {
-                  if (report.type === 'local-candidate') {
-                    localCandidates++;
-                  } else if (report.type === 'remote-candidate') {
-                    remoteCandidates++;
-                  } else if (report.type === 'candidate-pair') {
-                    icePairs++;
-                  }
-                });
-                
-                log(\`ICE候補数: ローカル=\${localCandidates}, リモート=\${remoteCandidates}, ペア=\${icePairs}\`);
-              });
-            }
-          }, 5000);
-        }
-        
         // ビデオ表示モードの切り替え（contain/cover）
         function toggleVideoFit() {
-          const videoElements = [localVideo, remoteVideo];
+          const elements = [localVideo, remoteImage];
           
-          videoElements.forEach(video => {
-            if (video) {
-              const currentFit = video.style.objectFit;
-              video.style.objectFit = currentFit === 'cover' ? 'contain' : 'cover';
-              log(\`ビデオ表示モード: \${video.style.objectFit}\`);
+          elements.forEach(element => {
+            if (element) {
+              const currentFit = element.style.objectFit;
+              element.style.objectFit = currentFit === 'cover' ? 'contain' : 'cover';
+              log(\`表示モード: \${element.style.objectFit}\`);
             }
           });
-          
-          // フォールバック画像も同様に
-          if (fallbackImage) {
-            fallbackImage.style.objectFit = fallbackImage.style.objectFit === 'cover' ? 'contain' : 'cover';
-          }
         }
 
         // ダブルタップでビデオ表示モードを切り替える
@@ -761,68 +606,86 @@ export async function GET(request: NextRequest) {
           lastTap = currentTime;
         });
         
-        // 単純化されたPeerJS実装
-        function startConnection() {
-          // 代替接続モードの場合は処理しない
-          if (usingFallbackMode) {
-            activateFallbackMode();
-            return;
-          }
+        // フレーム送信を開始
+        function startFrameSending() {
+          if (mode !== 'camera' || !localStream || frameIntervalId) return;
           
+          log(\`フレーム送信開始: 間隔=\${frameInterval}ms, 品質=\${imageQuality}, 解像度=\${imageResolution.width}x\${imageResolution.height}\`);
+          
+          // キャンバスを作成
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          
+          // キャンバスサイズを設定
+          canvas.width = imageResolution.width;
+          canvas.height = imageResolution.height;
+          
+          frameIntervalId = setInterval(() => {
+            if (!localStream || !connection || !connection.open) return;
+            
+            try {
+              // ローカルビデオからキャンバスに描画
+              context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+              
+              // 画像データをBase64に変換
+              const imageData = canvas.toDataURL('image/jpeg', imageQuality);
+              
+              // 画像データを送信
+              connection.send({
+                type: 'image',
+                data: imageData,
+                timestamp: Date.now(),
+                frameNumber: frameCount++
+              });
+              
+              // 転送量を計算
+              totalBytesTransferred += imageData.length;
+              
+              // FPSと転送速度を計算
+              const now = Date.now();
+              if (now - lastFpsUpdate > 1000) {
+                fps = frameCount;
+                frameCount = 0;
+                bytesPerSecond = totalBytesTransferred - (lastBytesUpdate || 0);
+                lastBytesUpdate = totalBytesTransferred;
+                lastFpsUpdate = now;
+                
+                // 情報を更新
+                updateCameraInfo();
+              }
+            } catch (err) {
+              log('フレーム送信エラー: ' + err);
+            }
+          }, frameInterval);
+        }
+        
+        // フレーム送信を停止
+        function stopFrameSending() {
+          if (frameIntervalId) {
+            clearInterval(frameIntervalId);
+            frameIntervalId = null;
+            log('フレーム送信停止');
+          }
+        }
+        
+        // PeerJS接続を開始
+        function startConnection() {
           // ピアIDの設定
           const peerId = mode === 'camera' ? 'camera-' + roomId : 'viewer-' + roomId;
           
           log('PeerJS初期化: ' + peerId);
           
-          // PeerJSの設定 - TURNサーバーを追加
+          // PeerJSの設定
           const peerConfig = {
-            debug: 3,
+            debug: 2,
             config: {
               'iceServers': [
-                // STUNサーバー
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
                 { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' },
-                { urls: 'stun:stun.stunprotocol.org:3478' },
-                { urls: 'stun:global.stun.twilio.com:3478' },
-                
-                // TURNサーバー（無料のOpenRelayプロジェクト）
-                {
-                  urls: 'turn:openrelay.metered.ca:80',
-                  username: 'openrelayproject',
-                  credential: 'openrelayproject'
-                },
-                {
-                  urls: 'turn:openrelay.metered.ca:443',
-                  username: 'openrelayproject',
-                  credential: 'openrelayproject'
-                },
-                {
-                  urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-                  username: 'openrelayproject',
-                  credential: 'openrelayproject'
-                },
-                // Google TURNサーバー
-                {
-                  urls: 'turn:relay.webrtc.org:80',
-                  username: 'webrtc',
-                  credential: 'webrtc'
-                },
-                {
-                  urls: 'turn:relay.webrtc.org:443',
-                  username: 'webrtc',
-                  credential: 'webrtc'
-                },
-                {
-                  urls: 'turn:relay.webrtc.org:443?transport=tcp',
-                  username: 'webrtc',
-                  credential: 'webrtc'
-                }
-              ],
-              'iceCandidatePoolSize': 10,
-              'iceTransportPolicy': 'all'
+                { urls: 'stun:stun4.l.google.com:19302' }
+              ]
             }
           };
           
@@ -855,85 +718,19 @@ export async function GET(request: NextRequest) {
               log('新しいIDで再試行: ' + newPeerId);
               peer = new Peer(newPeerId, peerConfig);
             } else if (err.type === 'peer-unavailable') {
-              // ピアが見つからない場合は代替接続モードを提案
-              log('ピアが見つかりません - 代替接続モードを提案');
-              fallbackBtn.style.display = 'inline-block';
+              // ピアが見つからない場合は再接続を提案
+              updateStatus('カメラが見つかりません - 再接続してください');
             } else if (err.type === 'network' || err.type === 'disconnected') {
               // ネットワークエラーの場合は再接続
               log('ネットワークエラー - 再接続を試みます');
               setTimeout(() => {
-                if (!usingFallbackMode) {
-                  startConnection();
-                }
+                startConnection();
               }, 3000);
-            } else if (err.type === 'webrtc') {
-              // WebRTCエラーの場合は代替接続モードに切り替え
-              log('WebRTCエラー - 代替接続モードに切り替えます');
-              setTimeout(() => {
-                activateFallbackMode();
-              }, 1000);
             }
           });
           
-          // カメラモードの場合の着信処理
+          // カメラモードの場合のデータ接続処理
           if (mode === 'camera') {
-            // 着信コール処理
-            peer.on('call', call => {
-              log('着信コール受信');
-              updateStatus('着信コールを受信しました');
-              
-              // 既存のコールがあれば閉じる
-              if (activeCall) {
-                activeCall.close();
-              }
-              
-              // 新しいコールを保存
-              activeCall = call;
-              
-              // ローカルストリームで応答
-              call.answer(localStream);
-              log('ローカルストリームで応答');
-              updateStatus('コールに応答しました');
-              
-              // ICE接続状態の監視
-              if (call.peerConnection) {
-                monitorIceConnectionState(call.peerConnection);
-                
-                // SDP情報をログに出力
-                const localSDP = call.peerConnection.localDescription;
-                const remoteSDP = call.peerConnection.remoteDescription;
-                
-                if (localSDP) {
-                  log('ローカルSDP: ' + localSDP.type);
-                  log('ローカルSDPの内容: ' + localSDP.sdp.substring(0, 100) + '...');
-                }
-                
-                if (remoteSDP) {
-                  log('リモートSDP: ' + remoteSDP.type);
-                  log('リモートSDPの内容: ' + remoteSDP.sdp.substring(0, 100) + '...');
-                }
-              }
-              
-              // リモートストリーム受信時の処理
-              call.on('stream', stream => {
-                log('リモートストリーム受信（カメラモード）');
-                // カメラモードでは視聴者からのストリームは表示しない
-              });
-              
-              // エラー処理
-              call.on('error', err => {
-                log('コールエラー: ' + err);
-                updateStatus('コールエラー: ' + err);
-              });
-              
-              // 切断処理
-              call.on('close', () => {
-                log('コール終了');
-                updateStatus('コールが終了しました');
-                activeCall = null;
-              });
-            });
-            
             // データ接続処理
             peer.on('connection', conn => {
               connection = conn;
@@ -947,10 +744,11 @@ export async function GET(request: NextRequest) {
                   conn.send({ type: 'pong', timestamp: Date.now() });
                 }
                 
-                // 代替接続モードのリクエスト
-                if (data.type === 'request-fallback') {
-                  log('代替接続モードのリクエストを受信');
-                  activateFallbackMode();
+                // 品質設定の変更リクエスト
+                if (data.type === 'quality-change') {
+                  log('品質設定変更リクエスト: ' + data.quality);
+                  qualitySelect.value = data.quality;
+                  qualitySelect.dispatchEvent(new Event('change'));
                 }
               });
               
@@ -958,12 +756,18 @@ export async function GET(request: NextRequest) {
                 log('データチャネルオープン');
                 updateStatus('視聴者と接続しました');
                 
+                // フレーム送信を開始
+                startFrameSending();
+                
                 // 定期的にステータスを送信
                 setInterval(() => {
                   if (conn.open) {
                     conn.send({ 
                       type: 'status', 
                       streaming: true,
+                      fps: fps,
+                      quality: qualitySelect.value,
+                      resolution: \`\${imageResolution.width}x\${imageResolution.height}\`,
                       timestamp: Date.now() 
                     });
                   }
@@ -973,6 +777,7 @@ export async function GET(request: NextRequest) {
               conn.on('close', () => {
                 log('データ接続終了');
                 updateStatus('視聴者との接続が終了しました');
+                stopFrameSending();
               });
             });
           }
@@ -987,18 +792,6 @@ export async function GET(request: NextRequest) {
           // 接続開始時間を記録
           connectionStartTime = Date.now();
           
-          // 接続タイムアウト設定
-          clearTimeout(connectionTimeout);
-          connectionTimeout = setTimeout(() => {
-            if (!remoteStream) {
-              log('接続タイムアウト - 代替接続モードに自動切り替え');
-              updateStatus('接続タイムアウト - 代替モードに切り替えます');
-              
-              // 代替接続モードを自動的に有効化
-              activateFallbackMode();
-            }
-          }, 15000);
-          
           try {
             // データ接続
             connection = peer.connect(targetId);
@@ -1010,156 +803,54 @@ export async function GET(request: NextRequest) {
               // pingを送信
               connection.send({ type: 'ping', timestamp: Date.now() });
               
-              // 既存のコールがあれば閉じる
-              if (activeCall) {
-                activeCall.close();
-              }
+              // 品質設定の変更を送信
+              connection.send({ 
+                type: 'quality-change', 
+                quality: 'medium' // デフォルトは中品質
+              });
               
-              try {
-                // カメラからのビデオストリームを要求
-                const callOptions = {
-                  metadata: { type: 'video-call' },
-                  sdpTransform: (sdp) => {
-                    // SDP設定を最適化（低遅延優先）
-                    let modifiedSdp = sdp;
-                    
-                    // ビデオコーデックの優先順位を調整
-                    modifiedSdp = modifiedSdp.replace('m=video', 'm=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 102 121 127 120 125 107 108 109 124 119 123 118 114 115 116');
-                    
-                    // 低遅延設定を追加
-                    modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; maxaveragebitrate=128000');
-                    
-                    // ICE接続タイムアウトを短く設定
-                    modifiedSdp += 'a=ice-options:trickle\\r\\n';
-                    
-                    // 各メディアラインの後に帯域幅制限を追加
-                    const lines = modifiedSdp.split('\\r\\n');
-                    const newLines = [];
-                    
-                    for (let i = 0; i < lines.length; i++) {
-                      newLines.push(lines[i]);
-                      // m=video または m=audio の後に帯域幅制限を追加
-                      if (lines[i].startsWith('m=video')) {
-                        newLines.push('b=AS:2000');
-                      } else if (lines[i].startsWith('m=audio')) {
-                        newLines.push('b=AS:128');
-                      }
-                    }
-                    
-                    modifiedSdp = newLines.join('\\r\\n');
-                    
-                    log('SDP変換: ' + modifiedSdp.substring(0, 100) + '...');
-                    
-                    return modifiedSdp;
-                  }
-                };
-                
-                // 空のストリームでコールを作成
-                const emptyStream = new MediaStream();
-                const call = peer.call(targetId, emptyStream, callOptions);
-                activeCall = call;
-                log('発信コール送信');
-                
-                // ICE接続状態の監視
-                if (call.peerConnection) {
-                  monitorIceConnectionState(call.peerConnection);
-                  
-                  // SDP情報をログに出力
-                  call.peerConnection.addEventListener('negotiationneeded', () => {
-                    log('ネゴシエーション必要イベント発生');
-                  });
-                  
-                  // データチャネルの状態を監視 - getDataChannelsメソッドは存在しないので削除
+              // 定期的にpingを送信
+              setInterval(() => {
+                if (connection && connection.open) {
+                  connection.send({ type: 'ping', timestamp: Date.now() });
                 }
-                
-                // リモートストリーム受信時の処理
-                call.on('stream', stream => {
-                  log('リモートストリーム受信（視聴モード）');
-                  updateStatus('接続済み');
-                  
-                  // ストリームの内容をログ
-                  const tracks = stream.getTracks();
-                  log(\`受信したトラック数: \${tracks.length}\`);
-                  tracks.forEach((track, i) => {
-                    log(\`トラック\${i+1}: \${track.kind} - \${track.readyState}\`);
-                  });
-                  
-                  // リモートストリームを保存
-                  remoteStream = stream;
-                  
-                  // ビデオ要素にストリームをセット
-                  remoteVideo.srcObject = stream;
-                  
-                  // ビデオの読み込みイベント
-                  remoteVideo.onloadedmetadata = () => {
-                    log('ビデオメタデータ読み込み完了');
-                    
-                    // ビデオ要素のスタイルを強制的に設定
-                    remoteVideo.style.width = '100%';
-                    remoteVideo.style.height = '100%';
-                    remoteVideo.style.objectFit = 'cover';
-                    
-                    // ビデオ再生
-                    remoteVideo.play().catch(e => {
-                      log('ビデオ再生エラー: ' + e);
-                      
-                      // 自動再生ポリシーによるエラーの場合、ユーザー操作を待つ
-                      if (e.name === 'NotAllowedError') {
-                        log('自動再生が許可されていません。ユーザー操作を待ちます。');
-                        
-                        // 画面タップで再生を試みる
-                        document.addEventListener('click', () => {
-                          remoteVideo.play().catch(err => log('再試行エラー: ' + err));
-                        }, { once: true });
-                      }
-                    });
-                  };
-                  
-                  // エラーイベント
-                  remoteVideo.onerror = (e) => {
-                    log('ビデオエラー: ' + e);
-                  };
-                  
-                  // タイムアウトをクリア
-                  clearTimeout(connectionTimeout);
-                });
-                
-                // エラー処理
-                call.on('error', err => {
-                  log('コールエラー: ' + err);
-                  updateStatus('コールエラー: ' + err);
-                });
-                
-                // 切断処理
-                call.on('close', () => {
-                  log('コール終了');
-                  updateStatus('コールが終了しました');
-                  activeCall = null;
-                });
-              } catch (err) {
-                log('コール作成エラー: ' + err);
-                updateStatus('コール作成エラー: ' + err);
-                
-                // エラーが発生した場合は代替接続モードに切り替え
-                setTimeout(() => {
-                  activateFallbackMode();
-                }, 1000);
-              }
+              }, 10000);
             });
             
             connection.on('data', data => {
-              log('データ受信: ' + JSON.stringify(data));
+              // 画像データの受信
+              if (data.type === 'image') {
+                remoteImage.src = data.data;
+                
+                // 転送量を計算
+                totalBytesTransferred += data.data.length;
+                
+                // フレームカウントを増加
+                frameCount++;
+                
+                // FPSと転送速度を計算
+                const now = Date.now();
+                if (now - lastFpsUpdate > 1000) {
+                  fps = frameCount;
+                  frameCount = 0;
+                  bytesPerSecond = totalBytesTransferred - (lastBytesUpdate || 0);
+                  lastBytesUpdate = totalBytesTransferred;
+                  lastFpsUpdate = now;
+                  
+                  // パフォーマンス情報を更新
+                  updatePerformanceStats();
+                }
+              }
               
               // カメラからのステータス更新
               if (data.type === 'status' && data.streaming) {
-                updateStatus('接続済み - ストリーミング中');
+                updateStatus(\`接続済み - FPS: \${data.fps}, 品質: \${data.quality}, 解像度: \${data.resolution}\`);
               }
               
-              // 代替接続モードの画像データ
-              if (data.type === 'image' && usingFallbackMode) {
-                fallbackImage.src = data.data;
-                fallbackImage.classList.remove('hidden');
-                remoteVideo.classList.add('hidden');
+              // pongの受信（レイテンシ計測）
+              if (data.type === 'pong') {
+                const latency = Date.now() - data.timestamp;
+                log(\`レイテンシ: \${latency}ms\`);
               }
             });
             
@@ -1175,98 +866,6 @@ export async function GET(request: NextRequest) {
           } catch (err) {
             log('接続エラー: ' + err);
             updateStatus('接続エラー: ' + err);
-          }
-        }
-        
-        // 代替接続モードを有効化
-        function activateFallbackMode() {
-          if (usingFallbackMode) return;
-          
-          usingFallbackMode = true;
-          log('代替接続モードを有効化');
-          updateStatus('代替接続モードに切り替え中...');
-          
-          // 既存の接続を閉じる
-          if (activeCall) {
-            activeCall.close();
-            activeCall = null;
-          }
-          
-          // 代替接続モードのUIを表示
-          if (mode === 'viewer') {
-            // 視聴モードの場合、カメラモード用のQRコードを表示
-            const fallbackUrl = \`${process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : window.location.origin}/?room=\${roomId}&mode=camera&fallback=true\`;
-            
-            // QRコードを生成
-            try {
-              // QRコードを生成（既にライブラリは読み込み済み）
-              QRCode.toCanvas(
-                fallbackQr, 
-                fallbackUrl, 
-                { width: 200 }, 
-                (error) => {
-                  if (error) {
-                    log('QRコード生成エラー: ' + error);
-                    fallbackQr.textContent = fallbackUrl;
-                  }
-                }
-              );
-            } catch (e) {
-              log('QRコード生成処理エラー: ' + e);
-              fallbackQr.textContent = fallbackUrl;
-            }
-            
-            fallbackContainer.classList.add('active');
-            updateStatus('スマートフォンでQRコードをスキャンしてください');
-            
-            // 既存の接続があれば代替接続モードをリクエスト
-            if (connection && connection.open) {
-              connection.send({ type: 'request-fallback' });
-            }
-            
-            // 代替接続モードでは画像を表示
-            remoteVideo.classList.add('hidden');
-            fallbackImage.classList.remove('hidden');
-          } else if (mode === 'camera') {
-            // カメラモードの場合、定期的に画像をキャプチャして送信
-            updateStatus('代替接続モード - 画像送信中');
-            
-            // 既存のインターバルをクリア
-            clearInterval(fallbackInterval);
-            
-            // キャンバスを作成
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            
-            // 定期的に画像をキャプチャして送信
-            fallbackInterval = setInterval(() => {
-              if (!localStream || !connection || !connection.open) return;
-              
-              try {
-                // ローカルビデオからキャンバスに描画
-                const videoTrack = localStream.getVideoTracks()[0];
-                if (videoTrack) {
-                  canvas.width = localVideo.videoWidth;
-                  canvas.height = localVideo.videoHeight;
-                  context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
-                  
-                  // 画像データをBase64に変換（品質と更新頻度のバランスを調整）
-                  const imageData = canvas.toDataURL('image/jpeg', 0.7); // 品質を少し下げて転送量削減
-                  
-                  // 画像データを送信
-                  if (connection && connection.open) {
-                    connection.send({
-                      type: 'image',
-                      data: imageData,
-                      timestamp: Date.now()
-                    });
-                    log('画像送信: ' + Math.floor(imageData.length / 1024) + 'KB');
-                  }
-                }
-              } catch (err) {
-                log('画像キャプチャエラー: ' + err);
-              }
-            }, 300); // 0.3秒ごとに送信（さらに更新頻度を上げる）
           }
         }
         
@@ -1316,10 +915,10 @@ export async function GET(request: NextRequest) {
           navigator.mediaDevices.getUserMedia({ 
             video: { 
               facingMode: { ideal: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
+              width: { ideal: imageResolution.width },
+              height: { ideal: imageResolution.height }
             }, 
-            audio: true 
+            audio: false // 音声は不要
           })
           .then(stream => {
             localStream = stream;
@@ -1373,11 +972,7 @@ export async function GET(request: NextRequest) {
             updateStatus('カメラ準備完了');
             
             // 接続開始
-            if (usingFallbackMode) {
-              activateFallbackMode();
-            } else {
-              startConnection();
-            }
+            startConnection();
           })
           .catch(err => {
             log('カメラエラー: ' + err.message);
@@ -1388,16 +983,16 @@ export async function GET(request: NextRequest) {
         else if (mode === 'viewer') {
           log('視聴モード開始');
           
+          // リモート画像の初期設定
+          remoteImage.style.width = '100%';
+          remoteImage.style.height = '100%';
+          remoteImage.style.objectFit = 'cover';
+          
           // 接続開始
-          if (usingFallbackMode || initialFallback) {
-            activateFallbackMode();
-          } else {
-            // 代替接続モードボタンを目立たせる
-            fallbackBtn.style.backgroundColor = 'rgba(0,150,0,0.7)';
-            fallbackBtn.style.border = '1px solid rgba(255,255,255,0.5)';
-            
-            startConnection();
-          }
+          startConnection();
+          
+          // パフォーマンス情報の表示
+          performanceStats.style.display = 'block';
         }
 
         // ページを離れる前に接続を閉じる
@@ -1408,8 +1003,7 @@ export async function GET(request: NextRequest) {
           if (peer) {
             peer.destroy();
           }
-          clearInterval(fallbackInterval);
-          clearInterval(iceConnectionCheckInterval);
+          stopFrameSending();
         };
         
         // iOS Safariでのカメラ表示問題対策
@@ -1442,46 +1036,11 @@ export async function GET(request: NextRequest) {
         if (mode === 'viewer') {
           // 定期的に接続状態を確認
           setInterval(() => {
-            if (!usingFallbackMode && activeCall && activeCall.peerConnection) {
-              const state = activeCall.peerConnection.iceConnectionState;
-              log('ICE接続状態確認: ' + state);
-              
-              // 接続が切断された場合は再接続
-              if (state === 'disconnected' || state === 'failed') {
-                log('接続が切断されました。再接続を試みます。');
-                connectToCamera();
-              }
-              
-              // ICE接続が進行しない場合は代替接続モードに切り替え
-              if (state === 'new' && Date.now() - connectionStartTime > 10000) {
-                log('ICE接続が進行していません。代替接続モードに切り替えます。');
-                activateFallbackMode();
-              }
+            if (connection && !connection.open) {
+              log('接続が切断されました。再接続を試みます。');
+              connectToCamera();
             }
           }, 10000);
-          
-          // ビデオ要素の表示を確認
-          setTimeout(() => {
-            if (remoteVideo) {
-              const videoWidth = remoteVideoContainer.clientWidth;
-              const videoHeight = remoteVideoContainer.clientHeight;
-              log(\`リモートビデオコンテナサイズ: \${videoWidth}x\${videoHeight}\`);
-              
-              // ビデオ要素のスタイルを強制的に設定
-              remoteVideo.style.width = '100%';
-              remoteVideo.style.height = '100%';
-              remoteVideo.style.objectFit = 'cover';
-              
-              // ビデオ要素の表示を確認
-              log(\`リモートビデオ表示状態: \${window.getComputedStyle(remoteVideo).display}\`);
-              
-              // ビデオが再生されていない場合は再生を試みる
-              if (remoteVideo.paused && remoteVideo.srcObject) {
-                log('リモートビデオが一時停止中です。再生を試みます。');
-                remoteVideo.play().catch(e => log('リモートビデオ再生エラー: ' + e));
-              }
-            }
-          }, 3000);
         }
       </script>
     </body>

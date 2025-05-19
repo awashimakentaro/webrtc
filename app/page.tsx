@@ -6,8 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon, XIcon } from "lucide-react"
+import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon, XIcon, Settings2Icon } from "lucide-react"
 import QRCode from "./components/qr-code"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export default function Home() {
   const [roomId, setRoomId] = useState("")
@@ -15,6 +16,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("viewer")
   const [showIframe, setShowIframe] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState("未接続")
+  const [quality, setQuality] = useState("medium")
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   // ページロード時に一意のルームIDを生成
@@ -66,14 +68,26 @@ export default function Home() {
     }
   }, [])
 
+  // 品質設定の変更
+  const handleQualityChange = (value: string) => {
+    setQuality(value)
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        {
+          type: "quality-change",
+          quality: value,
+        },
+        "*",
+      )
+    }
+  }
+
   return (
     <div className="container flex items-center justify-center min-h-screen py-8">
       <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
-          <CardDescription className="text-center">
-            WebRTCを使用してスマートフォンカメラの映像をブラウザに表示します
-          </CardDescription>
+          <CardDescription className="text-center">スマートフォンカメラの映像をブラウザに表示します</CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -113,22 +127,40 @@ export default function Home() {
               </div>
 
               <div className="mt-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <WifiIcon className="w-4 h-4" />
-                  <p className="text-sm">
-                    接続状態:{" "}
-                    <span
-                      className={
-                        connectionStatus === "接続済み"
-                          ? "text-green-500"
-                          : connectionStatus === "接続中..."
-                            ? "text-amber-500"
-                            : "text-gray-500"
-                      }
-                    >
-                      {connectionStatus}
-                    </span>
-                  </p>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <WifiIcon className="w-4 h-4" />
+                    <p className="text-sm">
+                      接続状態:{" "}
+                      <span
+                        className={
+                          connectionStatus.includes("接続済み")
+                            ? "text-green-500"
+                            : connectionStatus.includes("接続中")
+                              ? "text-amber-500"
+                              : "text-gray-500"
+                        }
+                      >
+                        {connectionStatus}
+                      </span>
+                    </p>
+                  </div>
+
+                  {showIframe && (
+                    <div className="flex items-center gap-2">
+                      <Settings2Icon className="w-4 h-4" />
+                      <Select value={quality} onValueChange={handleQualityChange}>
+                        <SelectTrigger className="w-[120px] h-8">
+                          <SelectValue placeholder="画質設定" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="high">高画質 (低FPS)</SelectItem>
+                          <SelectItem value="medium">標準 (中FPS)</SelectItem>
+                          <SelectItem value="low">低画質 (高FPS)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
 
                 {!showIframe ? (
@@ -181,9 +213,9 @@ export default function Home() {
                     接続状態:{" "}
                     <span
                       className={
-                        connectionStatus === "接続済み"
+                        connectionStatus.includes("接続済み")
                           ? "text-green-500"
-                          : connectionStatus === "接続中..."
+                          : connectionStatus.includes("接続中")
                             ? "text-amber-500"
                             : "text-gray-500"
                       }
