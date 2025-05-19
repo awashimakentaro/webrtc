@@ -616,15 +616,48 @@ export async function GET(request: NextRequest) {
           const canvas = document.createElement('canvas');
           const context = canvas.getContext('2d');
           
-          // キャンバスサイズを設定
-          canvas.width = imageResolution.width;
-          canvas.height = imageResolution.height;
+          // 実際のビデオサイズを取得するための関数
+          const updateCanvasSize = () => {
+            // 実際のビデオの幅と高さを取得
+            const videoWidth = localVideo.videoWidth;
+            const videoHeight = localVideo.videoHeight;
+            
+            if (videoWidth && videoHeight) {
+              // アスペクト比を計算
+              const aspectRatio = videoWidth / videoHeight;
+              
+              // 目標解像度に基づいて、アスペクト比を維持したサイズを計算
+              if (aspectRatio > 1) { // 横長の場合
+                canvas.width = imageResolution.width;
+                canvas.height = Math.round(imageResolution.width / aspectRatio);
+              } else { // 縦長または正方形の場合
+                canvas.height = imageResolution.height;
+                canvas.width = Math.round(imageResolution.height * aspectRatio);
+              }
+              
+              log(\`ビデオ実寸: \${videoWidth}x\${videoHeight}, アスペクト比: \${aspectRatio.toFixed(2)}, キャンバスサイズ: \${canvas.width}x\${canvas.height}\`);
+            }
+          };
+          
+          // 初回のキャンバスサイズ更新
+          updateCanvasSize();
+          
+          // ビデオのサイズが変わった場合に再計算
+          localVideo.addEventListener('resize', updateCanvasSize);
           
           frameIntervalId = setInterval(() => {
             if (!localStream || !connection || !connection.open) return;
             
             try {
-              // ローカルビデオからキャンバスに描画
+              // ビデオサイズが変わっていないか確認
+              if (localVideo.videoWidth > 0 && 
+                  (canvas.width !== localVideo.videoWidth || 
+                   canvas.height !== localVideo.videoHeight)) {
+                updateCanvasSize();
+              }
+              
+              // ローカルビデオからキャンバスに描画（アスペクト比を維持）
+              context.clearRect(0, 0, canvas.width, canvas.height);
               context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
               
               // 画像データをBase64に変換
@@ -635,7 +668,9 @@ export async function GET(request: NextRequest) {
                 type: 'image',
                 data: imageData,
                 timestamp: Date.now(),
-                frameNumber: frameCount++
+                frameNumber: frameCount++,
+                width: canvas.width,
+                height: canvas.height
               });
               
               // 転送量を計算
@@ -746,7 +781,7 @@ export async function GET(request: NextRequest) {
                 
                 // 品質設定の変更リクエスト
                 if (data.type === 'quality-change') {
-                  log('��質設定変更リクエスト: ' + data.quality);
+                  log('品質設定変更リクエスト: ' + data.quality);
                   qualitySelect.value = data.quality;
                   qualitySelect.dispatchEvent(new Event('change'));
                 }
@@ -822,6 +857,12 @@ export async function GET(request: NextRequest) {
               if (data.type === 'image') {
                 remoteImage.src = data.data;
                 
+                // 画像のサイズ情報があれば設定
+                if (data.width && data.height) {
+                  // アスペクト比を維持するためのスタイル設定
+                  remoteImage.style.aspectRatio = \`\${data.width} / \${data.height}\`;
+                }
+                
                 // 転送量を計算
                 totalBytesTransferred += data.data.length;
                 
@@ -839,6 +880,20 @@ export async function GET(request: NextRequest) {
                   
                   // パフォーマンス情報を更新
                   updatePerformanceStats();
+                }
+                
+                // 人物検出モードの場合、親ウィンドウに画像データを送信
+                if (embedded && window.parent) {
+                  try {
+                    window.parent.postMessage({ 
+                      type: 'image-data', 
+                      data: data.data,
+                      width: data.width,
+                      height: data.height
+                    }, window.location.origin);
+                  } catch (e) {
+                    log('画像データ送信エラー: ' + e);
+                  }
                 }
               }
               
@@ -916,7 +971,8 @@ export async function GET(request: NextRequest) {
             video: { 
               facingMode: { ideal: "environment" },
               width: { ideal: imageResolution.width },
-              height: { ideal: imageResolution.height }
+              height: { ideal: imageResolution.height },
+              aspectRatio: { ideal: 4/3 } // 一般的なアスペクト比を指定
             }, 
             audio: false // 音声は不要
           })
