@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
       <style>
         * {
           box-sizing: border-box;
@@ -221,6 +222,11 @@ export async function GET(request: NextRequest) {
           padding: 10px;
           background: white;
           border-radius: 5px;
+          width: 220px;
+          height: 220px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
         
         #fallback-image {
@@ -372,6 +378,7 @@ export async function GET(request: NextRequest) {
         let connectionTimeout;
         let usingFallbackMode = initialFallback;
         let fallbackInterval;
+        let iceConnectionCheckInterval;
         
         // 接続状態を親ウィンドウに通知
         function updateStatus(status) {
@@ -562,6 +569,9 @@ export async function GET(request: NextRequest) {
             if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
               updateStatus('ICE接続確立');
               clearTimeout(connectionTimeout);
+              
+              // ICE接続が確立したらインターバルをクリア
+              clearInterval(iceConnectionCheckInterval);
             } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
               updateStatus('ICE接続失敗');
               
@@ -580,25 +590,72 @@ export async function GET(request: NextRequest) {
           // ICE候補の詳細ログを追加
           pc.onicecandidate = (event) => {
             if (event.candidate) {
-              log('ICE候補追加: ' + JSON.stringify(event.candidate));
+              log('ICE候補追加: ' + JSON.stringify({
+                type: event.candidate.type,
+                protocol: event.candidate.protocol,
+                address: event.candidate.address,
+                port: event.candidate.port,
+                priority: event.candidate.priority,
+                foundation: event.candidate.foundation,
+                component: event.candidate.component,
+                relatedAddress: event.candidate.relatedAddress,
+                relatedPort: event.candidate.relatedPort
+              }));
             } else {
               log('ICE候補収集完了');
             }
           };
           
-          // 追加: ICE収集状態の変化を監視
+          // ICE収集状態の変化を監視
           pc.onicegatheringstatechange = () => {
             log('ICE収集状態変更: ' + pc.iceGatheringState);
           };
           
-          // 追加: 接続状態の変化を監視
+          // 接続状態の変化を監視
           pc.onconnectionstatechange = () => {
             log('接続状態変更: ' + pc.connectionState);
+            
+            if (pc.connectionState === 'connected') {
+              updateStatus('接続確立');
+              clearTimeout(connectionTimeout);
+            } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+              updateStatus('接続失敗');
+              
+              // 一定時間後に代替接続モードに切り替え
+              if (mode === 'viewer' && !usingFallbackMode) {
+                log('接続失敗 - 代替接続モードに切り替えます');
+                setTimeout(() => {
+                  activateFallbackMode();
+                }, 3000);
+              }
+            }
           };
           
-          // 追加: シグナリング状態の変化を監視
+          // シグナリング状態の変化を監視
           pc.onsignalingstatechange = () => {
             log('シグナリング状態変更: ' + pc.signalingState);
+          };
+          
+          // トラック追加イベントの監視
+          pc.ontrack = (event) => {
+            log('トラック追加: ' + event.track.kind);
+            
+            if (event.track.kind === 'video') {
+              log('ビデオトラック受信');
+              
+              // ストリームの詳細をログ
+              const streams = event.streams;
+              if (streams && streams.length > 0) {
+                log(\`受信したストリーム数: \${streams.length}\`);
+                streams.forEach((stream, i) => {
+                  const tracks = stream.getTracks();
+                  log(\`ストリーム\${i+1}のトラック数: \${tracks.length}\`);
+                  tracks.forEach((track, j) => {
+                    log(\`ストリーム\${i+1}のトラック\${j+1}: \${track.kind} - \${track.readyState}\`);
+                  });
+                });
+              }
+            }
           };
           
           // 接続統計情報の定期的な収集
@@ -619,6 +676,42 @@ export async function GET(request: NextRequest) {
               }
             }, 5000);
           }
+          
+          // ICE接続状態が進行しない場合のチェック
+          clearInterval(iceConnectionCheckInterval);
+          iceConnectionCheckInterval = setInterval(() => {
+            if (pc.iceConnectionState === 'new' || pc.iceConnectionState === 'checking') {
+              log('ICE接続が進行していません: ' + pc.iceConnectionState);
+              
+              // ICE候補の収集状態を確認
+              log('ICE収集状態: ' + pc.iceGatheringState);
+              
+              // 接続状態を確認
+              log('接続状態: ' + pc.connectionState);
+              
+              // シグナリング状態を確認
+              log('シグナリング状態: ' + pc.signalingState);
+              
+              // ICE候補の数を確認
+              pc.getStats().then(stats => {
+                let localCandidates = 0;
+                let remoteCandidates = 0;
+                let icePairs = 0;
+                
+                stats.forEach(report => {
+                  if (report.type === 'local-candidate') {
+                    localCandidates++;
+                  } else if (report.type === 'remote-candidate') {
+                    remoteCandidates++;
+                  } else if (report.type === 'candidate-pair') {
+                    icePairs++;
+                  }
+                });
+                
+                log(\`ICE候補数: ローカル=\${localCandidates}, リモート=\${remoteCandidates}, ペア=\${icePairs}\`);
+              });
+            }
+          }, 5000);
         }
         
         // 単純化されたPeerJS実装
@@ -646,6 +739,7 @@ export async function GET(request: NextRequest) {
                 { urls: 'stun:stun3.l.google.com:19302' },
                 { urls: 'stun:stun4.l.google.com:19302' },
                 { urls: 'stun:stun.stunprotocol.org:3478' },
+                { urls: 'stun:global.stun.twilio.com:3478' },
                 
                 // TURNサーバー（無料のOpenRelayプロジェクト）
                 {
@@ -662,9 +756,26 @@ export async function GET(request: NextRequest) {
                   urls: 'turn:openrelay.metered.ca:443?transport=tcp',
                   username: 'openrelayproject',
                   credential: 'openrelayproject'
+                },
+                // Google TURNサーバー
+                {
+                  urls: 'turn:relay.webrtc.org:80',
+                  username: 'webrtc',
+                  credential: 'webrtc'
+                },
+                {
+                  urls: 'turn:relay.webrtc.org:443',
+                  username: 'webrtc',
+                  credential: 'webrtc'
+                },
+                {
+                  urls: 'turn:relay.webrtc.org:443?transport=tcp',
+                  username: 'webrtc',
+                  credential: 'webrtc'
                 }
               ],
-              'iceCandidatePoolSize': 10
+              'iceCandidatePoolSize': 10,
+              'iceTransportPolicy': 'all'
             }
           };
           
@@ -734,6 +845,20 @@ export async function GET(request: NextRequest) {
               // ICE接続状態の監視
               if (call.peerConnection) {
                 monitorIceConnectionState(call.peerConnection);
+                
+                // SDP情報をログに出力
+                const localSDP = call.peerConnection.localDescription;
+                const remoteSDP = call.peerConnection.remoteDescription;
+                
+                if (localSDP) {
+                  log('ローカルSDP: ' + localSDP.type);
+                  log('ローカルSDPの内容: ' + localSDP.sdp.substring(0, 100) + '...');
+                }
+                
+                if (remoteSDP) {
+                  log('リモートSDP: ' + remoteSDP.type);
+                  log('リモートSDPの内容: ' + remoteSDP.sdp.substring(0, 100) + '...');
+                }
               }
               
               // リモートストリーム受信時の処理
@@ -848,16 +973,41 @@ export async function GET(request: NextRequest) {
                     // 低遅延設定を追加
                     modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; maxaveragebitrate=128000');
                     
+                    // ICE接続タイムアウトを短く設定
+                    modifiedSdp += 'a=ice-options:trickle\\r\\n';
+                    
+                    // バンド幅制限を緩和
+                    modifiedSdp += 'b=AS:2000\\r\\n';
+                    
+                    log('SDP変換: ' + modifiedSdp.substring(0, 100) + '...');
+                    
                     return modifiedSdp;
                   }
                 };
-                const call = peer.call(targetId, new MediaStream(), callOptions);
+                
+                // 空のストリームでコールを作成
+                const emptyStream = new MediaStream();
+                const call = peer.call(targetId, emptyStream, callOptions);
                 activeCall = call;
                 log('発信コール送信');
                 
                 // ICE接続状態の監視
                 if (call.peerConnection) {
                   monitorIceConnectionState(call.peerConnection);
+                  
+                  // SDP情報をログに出力
+                  call.peerConnection.addEventListener('negotiationneeded', () => {
+                    log('ネゴシエーション必要イベント発生');
+                  });
+                  
+                  // データチャネルの状態を監視
+                  const dataChannels = call.peerConnection.getDataChannels();
+                  if (dataChannels && dataChannels.length > 0) {
+                    log(\`データチャネル数: \${dataChannels.length}\`);
+                    dataChannels.forEach((dc, i) => {
+                      log(\`データチャネル\${i+1}の状態: \${dc.readyState}\`);
+                    });
+                  }
                 }
                 
                 // リモートストリーム受信時の処理
@@ -980,19 +1130,29 @@ export async function GET(request: NextRequest) {
             // 視聴モードの場合、カメラモード用のQRコードを表示
             const fallbackUrl = \`${process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : window.location.origin}/?room=\${roomId}&mode=camera&fallback=true\`;
             
-            // QRコードライブラリを動的に読み込み
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js';
-            script.onload = () => {
-              // QRコードを生成
-              QRCode.toCanvas(fallbackQr, fallbackUrl, { width: 200 }, (error) => {
-                if (error) {
-                  log('QRコード生成エラー: ' + error);
-                  fallbackQr.innerHTML = fallbackUrl;
+            // QRコードを生成
+            try {
+              // QRコードを生成（既にライブラリは読み込み済み）
+              QRCode.toCanvas(
+                document.createElement('canvas'), 
+                fallbackUrl, 
+                { width: 200 }, 
+                (error, canvas) => {
+                  if (error) {
+                    log('QRコード生成エラー: ' + error);
+                    fallbackQr.textContent = fallbackUrl;
+                  } else {
+                    // 既存の内容をクリア
+                    fallbackQr.innerHTML = '';
+                    // 生成したキャンバスを追加
+                    fallbackQr.appendChild(canvas);
+                  }
                 }
-              });
-            };
-            document.head.appendChild(script);
+              );
+            } catch (e) {
+              log('QRコード生成処理エラー: ' + e);
+              fallbackQr.textContent = fallbackUrl;
+            }
             
             fallbackContainer.classList.add('active');
             updateStatus('スマートフォンでQRコードをスキャンしてください');
@@ -1029,7 +1189,7 @@ export async function GET(request: NextRequest) {
                   context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
                   
                   // 画像データをBase64に変換（品質と更新頻度のバランスを調整）
-                  const imageData = canvas.toDataURL('image/jpeg', 0.65); // 品質を少し下げて転送量削減
+                  const imageData = canvas.toDataURL('image/jpeg', 0.7); // 品質を少し下げて転送量削減
                   
                   // 画像データを送信
                   if (connection && connection.open) {
@@ -1044,7 +1204,7 @@ export async function GET(request: NextRequest) {
               } catch (err) {
                 log('画像キャプチャエラー: ' + err);
               }
-            }, 400); // 0.4秒ごとに送信（さらに更新頻度を上げる）
+            }, 300); // 0.3秒ごとに送信（さらに更新頻度を上げる）
           }
         }
         
@@ -1187,6 +1347,7 @@ export async function GET(request: NextRequest) {
             peer.destroy();
           }
           clearInterval(fallbackInterval);
+          clearInterval(iceConnectionCheckInterval);
         };
         
         // iOS Safariでのカメラ表示問題対策
@@ -1228,8 +1389,17 @@ export async function GET(request: NextRequest) {
                 log('接続が切断されました。再接続を試みます。');
                 connectToCamera();
               }
+              
+              // ICE接続が進行しない場合は代替接続モードに切り替え
+              if (state === 'new' && Date.now() - connectionStartTime > 10000) {
+                log('ICE接続が進行していません。代替接続モードに切り替えます。');
+                activateFallbackMode();
+              }
             }
           }, 10000);
+          
+          // 接続開始時間を記録
+          const connectionStartTime = Date.now();
           
           // ビデオ要素の表示を確認
           setTimeout(() => {
