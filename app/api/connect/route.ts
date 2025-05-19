@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     <head>
       <title>WebRTC Connection</title>
       <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="viewport" content="width=device-width, initial-scale: 1.0">
       <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
       <style>
         * {
@@ -624,8 +624,19 @@ export async function GET(request: NextRequest) {
             config: {
               'iceServers': [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-              ]
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:stun.stunprotocol.org:3478' },
+                // 無料のTURNサーバーを追加（実際の環境では自前のTURNサーバーを使用することを推奨）
+                {
+                  urls: 'turn:openrelay.metered.ca:80',
+                  username: 'openrelayproject',
+                  credential: 'openrelayproject'
+                }
+              ],
+              'iceCandidatePoolSize': 10
             }
           };
           
@@ -777,7 +788,7 @@ export async function GET(request: NextRequest) {
               // 代替接続モードを自動的に有効化
               activateFallbackMode();
             }
-          }, 15000);
+          }, 10000);
           
           try {
             // データ接続
@@ -797,12 +808,24 @@ export async function GET(request: NextRequest) {
               
               try {
                 // カメラからのビデオストリームを要求
-                const call = peer.call(targetId, new MediaStream());
+                const callOptions = {
+                  metadata: { type: 'video-call' },
+                  sdpTransform: (sdp) => {
+                    // SDP設定を最適化（低遅延優先）
+                    return sdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; maxaveragebitrate=128000');
+                  }
+                };
+                const call = peer.call(targetId, new MediaStream(), callOptions);
                 activeCall = call;
                 log('発信コール送信');
                 
                 // ICE接続状態の監視
                 if (call.peerConnection) {
+                  // 接続設定を最適化
+                  call.peerConnection.onconnectionstatechange = () => {
+                    log('接続状態変更: ' + call.peerConnection.connectionState);
+                  };
+                  
                   monitorIceConnectionState(call.peerConnection);
                 }
                 
@@ -975,7 +998,7 @@ export async function GET(request: NextRequest) {
                   context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
                   
                   // 画像データをBase64に変換（品質と更新頻度のバランスを調整）
-                  const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                  const imageData = canvas.toDataURL('image/jpeg', 0.65); // 品質を少し下げて転送量削減
                   
                   // 画像データを送信
                   if (connection && connection.open) {
@@ -990,7 +1013,7 @@ export async function GET(request: NextRequest) {
               } catch (err) {
                 log('画像キャプチャエラー: ' + err);
               }
-            }, 500); // 0.5秒ごとに送信（更新頻度を上げる）
+            }, 400); // 0.4秒ごとに送信（さらに更新頻度を上げる）
           }
         }
         
@@ -1073,9 +1096,13 @@ export async function GET(request: NextRequest) {
           log('視聴モード開始');
           
           // 接続開始
-          if (usingFallbackMode) {
+          if (usingFallbackMode || initialFallback) {
             activateFallbackMode();
           } else {
+            // 代替接続モードボタンを目立たせる
+            fallbackBtn.style.backgroundColor = 'rgba(0,150,0,0.7)';
+            fallbackBtn.style.border = '1px solid rgba(255,255,255,0.5)';
+            
             startConnection();
           }
         }
