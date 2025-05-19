@@ -70,59 +70,67 @@ export async function GET(request: NextRequest) {
           background-color: #000;
         }
         
+        /* ステータスバーを下部に固定し、高さを制限 */
         #status-bar {
           position: absolute;
           bottom: 0;
           left: 0;
           right: 0;
-          padding: 10px;
-          background: rgba(0,0,0,0.7);
+          padding: 5px;
+          background: rgba(0,0,0,0.5);
           color: white;
           text-align: center;
-          font-size: 14px;
-          z-index: 100;
-        }
-        
-        #debug-panel {
-          position: fixed;
-          bottom: 50px;
-          left: 10px;
-          right: 10px;
-          max-height: 150px;
-          overflow-y: auto;
-          background: rgba(0,0,0,0.7);
-          color: white;
-          padding: 10px;
           font-size: 12px;
           z-index: 100;
-          border-radius: 5px;
-          display: none;
+          height: 30px;
+          line-height: 20px;
         }
         
+        /* デバッグパネルを右下に配置し、サイズを制限 */
+        #debug-panel {
+          position: fixed;
+          bottom: 40px;
+          right: 10px;
+          width: 250px;
+          max-height: 150px;
+          overflow-y: auto;
+          background: rgba(0,0,0,0.5);
+          color: white;
+          padding: 5px;
+          font-size: 10px;
+          z-index: 90;
+          border-radius: 5px;
+          display: none;
+          opacity: 0.7;
+        }
+        
+        /* コントロールパネルを下部に配置し、ステータスバーと重ならないように */
         #control-panel {
           position: absolute;
-          bottom: 60px;
+          bottom: 40px;
           left: 0;
           right: 0;
           display: flex;
           justify-content: center;
           gap: 10px;
           padding: 10px;
-          z-index: 100;
+          z-index: 95;
         }
         
         .btn {
-          background: rgba(255,255,255,0.2);
-          border: none;
+          background: rgba(0,0,0,0.5);
+          border: 1px solid rgba(255,255,255,0.3);
           color: white;
           padding: 8px 15px;
           border-radius: 20px;
           cursor: pointer;
           font-size: 14px;
+          min-width: 80px;
+          text-align: center;
         }
         
         .btn:hover {
-          background: rgba(255,255,255,0.3);
+          background: rgba(0,0,0,0.7);
         }
         
         .btn:disabled {
@@ -130,18 +138,22 @@ export async function GET(request: NextRequest) {
           cursor: not-allowed;
         }
         
+        /* カメラ情報を左上に配置し、サイズを制限 */
         #camera-info {
           position: absolute;
           top: 10px;
           left: 10px;
-          background: rgba(0,0,0,0.7);
+          background: rgba(0,0,0,0.5);
           color: white;
-          padding: 8px;
-          font-size: 12px;
-          z-index: 100;
+          padding: 5px;
+          font-size: 10px;
+          z-index: 95;
           border-radius: 5px;
+          max-width: 150px;
+          opacity: 0.7;
         }
         
+        /* カメラコントロールを右上に配置 */
         #camera-controls {
           position: absolute;
           top: 10px;
@@ -149,11 +161,11 @@ export async function GET(request: NextRequest) {
           display: flex;
           flex-direction: column;
           gap: 10px;
-          z-index: 100;
+          z-index: 95;
         }
         
         #camera-select {
-          background: rgba(0,0,0,0.7);
+          background: rgba(0,0,0,0.5);
           color: white;
           border: 1px solid rgba(255,255,255,0.3);
           border-radius: 5px;
@@ -165,15 +177,16 @@ export async function GET(request: NextRequest) {
           display: none !important;
         }
         
+        /* 接続インジケーターを右上に配置し、サイズを小さく */
         .connection-indicator {
           position: absolute;
           top: 10px;
           right: 10px;
-          width: 15px;
-          height: 15px;
+          width: 10px;
+          height: 10px;
           border-radius: 50%;
           background-color: red;
-          z-index: 100;
+          z-index: 90;
         }
         
         .connection-indicator.connected {
@@ -184,6 +197,7 @@ export async function GET(request: NextRequest) {
           background-color: orange;
         }
         
+        /* 代替接続モードのコンテナを中央に配置 */
         #fallback-container {
           position: absolute;
           top: 50%;
@@ -193,6 +207,9 @@ export async function GET(request: NextRequest) {
           color: white;
           z-index: 90;
           display: none;
+          background: rgba(0,0,0,0.7);
+          padding: 20px;
+          border-radius: 10px;
         }
         
         #fallback-container.active {
@@ -214,6 +231,43 @@ export async function GET(request: NextRequest) {
           border: 1px solid rgba(255,255,255,0.3);
           border-radius: 5px;
         }
+        
+        /* デバッグボタンを右下に固定 */
+        #debug-btn {
+          position: fixed;
+          bottom: 40px;
+          right: 10px;
+          z-index: 100;
+          font-size: 12px;
+          padding: 5px 10px;
+          opacity: 0.5;
+          min-width: auto;
+        }
+        
+        /* カメラモードのボタンサイズを調整 */
+        #camera-controls .btn {
+          font-size: 12px;
+          padding: 5px 10px;
+          min-width: auto;
+        }
+        
+        /* 小さい画面用の調整 */
+        @media (max-height: 500px) {
+          #control-panel {
+            bottom: 35px;
+          }
+          
+          .btn {
+            padding: 5px 10px;
+            font-size: 12px;
+          }
+          
+          #status-bar {
+            height: 25px;
+            font-size: 10px;
+            line-height: 15px;
+          }
+        }
       </style>
     </head>
     <body>
@@ -233,15 +287,16 @@ export async function GET(request: NextRequest) {
         
         <div id="camera-controls" class="${mode === "viewer" ? "hidden" : ""}">
           <button id="switch-camera-btn" class="btn">カメラ切替</button>
-          <button id="torch-btn" class="btn" disabled>ライト ON/OFF</button>
+          <button id="torch-btn" class="btn" disabled>ライト</button>
           <select id="camera-select" class="hidden"></select>
         </div>
         
         <div id="control-panel">
-          <button id="debug-btn" class="btn">デバッグ表示</button>
           <button id="reconnect-btn" class="btn">再接続</button>
           <button id="fallback-btn" class="btn">代替接続</button>
         </div>
+        
+        <button id="debug-btn" class="btn">デバッグ</button>
         
         <div id="status-bar">接続中...</div>
         <div id="debug-panel"></div>
@@ -290,8 +345,8 @@ export async function GET(request: NextRequest) {
           activateFallbackMode();
         });
         
-        // 初期状態ではデバッグを表示
-        debugPanel.style.display = 'block';
+        // 初期状態ではデバッグを非表示
+        debugPanel.style.display = 'none';
         
         // ログ関数
         function log(message) {
@@ -354,7 +409,7 @@ export async function GET(request: NextRequest) {
             if (videoTrack) {
               const settings = videoTrack.getSettings();
               cameraInfo.innerHTML = \`
-                カメラ: \${videoTrack.label}<br>
+                カメラ: \${videoTrack.label.substring(0, 20)}...<br>
                 解像度: \${settings.width}x\${settings.height}<br>
                 向き: \${currentFacingMode === 'environment' ? '背面' : '前面'}<br>
                 ライト: \${torchAvailable ? (torchOn ? 'ON' : 'OFF') : '非対応'}
@@ -486,6 +541,7 @@ export async function GET(request: NextRequest) {
               advanced: [{ torch: torchOn }]
             });
             log(\`ライト: \${torchOn ? 'ON' : 'OFF'}\`);
+            torchBtn.textContent = torchOn ? 'ライトOFF' : 'ライトON';
             updateCameraInfo();
           } catch (err) {
             log('ライト切り替えエラー: ' + err);
