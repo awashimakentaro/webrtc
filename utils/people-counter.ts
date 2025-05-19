@@ -55,7 +55,10 @@ export class PeopleCounter {
     async detectPeople(imageElement: HTMLImageElement | HTMLVideoElement, canvas: HTMLCanvasElement) {
       if (!this.model) {
         await this.loadModel()
-        if (!this.model) return
+        if (!this.model) {
+          console.error("モデルが読み込まれていません")
+          return
+        }
       }
   
       const now = Date.now()
@@ -65,18 +68,20 @@ export class PeopleCounter {
       try {
         // 画像が読み込まれているか確認
         if (imageElement instanceof HTMLImageElement && !imageElement.complete) {
+          console.log("画像がまだ読み込まれていません")
           return
         }
   
         // キャンバスのコンテキスト取得
         const ctx = canvas.getContext("2d")
-        if (!ctx) return
+        if (!ctx) {
+          console.error("キャンバスコンテキストを取得できません")
+          return
+        }
   
-        // キャンバスのクリア
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        console.log("人物検出を実行します...")
   
         // 画像サイズに合わせてキャンバスをリサイズ
-        // naturalWidthの代わりに、より安全な方法でサイズを取得
         let imgWidth = 0
         let imgHeight = 0
   
@@ -84,15 +89,21 @@ export class PeopleCounter {
           // 画像要素の場合
           imgWidth = imageElement.width || imageElement.clientWidth || 640
           imgHeight = imageElement.height || imageElement.clientHeight || 480
+          console.log(`画像サイズ: ${imgWidth}x${imgHeight}`)
         } else {
           // ビデオ要素の場合
           imgWidth = imageElement.videoWidth || imageElement.clientWidth || 640
           imgHeight = imageElement.videoHeight || imageElement.clientHeight || 480
+          console.log(`ビデオサイズ: ${imgWidth}x${imgHeight}`)
         }
   
         // キャンバスのサイズを設定
         canvas.width = imgWidth
         canvas.height = imgHeight
+        console.log(`キャンバスサイズを設定: ${canvas.width}x${canvas.height}`)
+  
+        // キャンバスのクリア
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
   
         // デバッグモードの場合は横断ラインを描画
         if (this.debugMode) {
@@ -101,6 +112,7 @@ export class PeopleCounter {
   
         // 人物検出の実行
         const predictions = await this.model.detect(imageElement)
+        console.log(`検出結果: ${predictions.length}個のオブジェクトを検出`)
   
         // 人物の検出と追跡
         this.trackPeople(predictions, ctx)
@@ -123,6 +135,7 @@ export class PeopleCounter {
     private trackPeople(predictions: any[], ctx: CanvasRenderingContext2D) {
       // 人物のみをフィルタリング
       const people = predictions.filter((pred) => pred.class === "person")
+      console.log(`${people.length}人の人物を検出しました`)
   
       // 現在のフレームで検出された人物のID
       const currentIds = new Set<string>()
@@ -154,6 +167,7 @@ export class PeopleCounter {
             direction: null,
           })
           currentIds.add(newId)
+          console.log(`新しい人物を追跡開始: ID=${newId}`)
         }
   
         // デバッグモードの場合はバウンディングボックスを描画
@@ -164,6 +178,11 @@ export class PeopleCounter {
   
           ctx.fillStyle = "white"
           ctx.fillRect(centerX - 3, centerY - 3, 6, 6)
+  
+          // 信頼度を表示
+          ctx.fillStyle = "white"
+          ctx.font = "12px Arial"
+          ctx.fillText(`${Math.round(person.score * 100)}%`, x, y - 5)
         }
       }
   
@@ -205,8 +224,6 @@ export class PeopleCounter {
     ) {
       if (person.crossed) return
   
-      const [x, y, width, height] = person.box
-  
       // ラインとの交差判定
       if (this.isPointCrossingLine(centerX, centerY)) {
         // 交差方向の判定
@@ -214,6 +231,7 @@ export class PeopleCounter {
   
         if (!person.direction) {
           person.direction = direction
+          console.log(`人物(${person.id})の初期方向: ${direction}`)
         } else if (person.direction !== direction) {
           // 方向が変わった場合、ラインを横切ったとみなす
           person.crossed = true
@@ -226,7 +244,10 @@ export class PeopleCounter {
   
           this.peopleCount.total = this.peopleCount.leftToRight + this.peopleCount.rightToLeft
   
-          console.log(`人物がラインを横切りました: ${person.direction} -> ${direction}`)
+          console.log(`人物(${person.id})がラインを横切りました: ${person.direction} -> ${direction}`)
+          console.log(
+            `現在のカウント: 左→右=${this.peopleCount.leftToRight}, 右→左=${this.peopleCount.rightToLeft}, 合計=${this.peopleCount.total}`,
+          )
         }
       }
     }
@@ -249,9 +270,10 @@ export class PeopleCounter {
   
     // 横断方向の判定
     private determineDirection(x: number) {
-      // 画面の中央を基準に左右を判定
-      const screenCenter = window.innerWidth / 2
-      return x > screenCenter ? "right" : "left"
+      // 横断ラインの中点を基準に左右を判定
+      const lineCenterX = (this.crossingLine.x1 + this.crossingLine.x2) / 2
+      console.log(`ライン中点: ${lineCenterX}, 人物位置: ${x}`)
+      return x > lineCenterX ? "right" : "left"
     }
   
     // 追跡データのクリーンアップ

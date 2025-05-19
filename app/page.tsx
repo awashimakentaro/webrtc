@@ -75,14 +75,23 @@ export default function Home() {
   // 人物カウンターの初期化
   const initPeopleCounter = () => {
     if (!peopleCounterRef.current) {
+      console.log("人物カウンターを初期化しています...")
       peopleCounterRef.current = new PeopleCounter()
-      peopleCounterRef.current.setCountUpdateCallback(setPeopleCount)
+      peopleCounterRef.current.setCountUpdateCallback((count) => {
+        console.log("カウント更新:", count)
+        setPeopleCount(count)
+      })
       peopleCounterRef.current.setDebugMode(debugMode)
 
       // 画面の中央に横断ラインを設定
-      const width = window.innerWidth
-      const height = window.innerHeight
+      const width = canvasRef.current?.width || window.innerWidth
+      const height = canvasRef.current?.height || window.innerHeight
       peopleCounterRef.current.setCrossingLine(width * 0.2, height * 0.5, width * 0.8, height * 0.5)
+
+      // モデルを読み込む
+      peopleCounterRef.current.loadModel().then(() => {
+        console.log("人物検出モデルの読み込みが完了しました")
+      })
 
       console.log("人物カウンター初期化完了")
     }
@@ -98,8 +107,14 @@ export default function Home() {
 
       // 画像データの受信（人物検出用）
       if (event.data && event.data.type === "image-data" && remoteImageRef.current) {
+        // 画像データを設定
         remoteImageRef.current.src = event.data.data
-        setImageLoaded(true)
+
+        // 画像が読み込まれたら人物検出を実行
+        if (showPeopleCounter && peopleCounterRef.current && canvasRef.current) {
+          console.log("画像データを受信しました - 人物検出を実行します")
+          peopleCounterRef.current.detectPeople(remoteImageRef.current, canvasRef.current)
+        }
       }
     }
 
@@ -108,55 +123,7 @@ export default function Home() {
     return () => {
       window.removeEventListener("message", handleMessage)
     }
-  }, [])
-
-  // 人物検出の実行
-  useEffect(() => {
-    if (!showPeopleCounter || activeTab !== "viewer" || !showIframe || !imageLoaded) return
-
-    // 既存のアニメーションフレームをキャンセル
-    if (animationFrameIdRef.current) {
-      cancelAnimationFrame(animationFrameIdRef.current)
-    }
-
-    const peopleCounter = peopleCounterRef.current
-    const canvas = canvasRef.current
-
-    if (!peopleCounter || !canvas) return
-
-    // 画面の中央に横断ラインを設定
-    const setLine = () => {
-      const width = canvas.width || window.innerWidth
-      const height = canvas.height || window.innerHeight
-      peopleCounter.setCrossingLine(width * 0.2, height * 0.5, width * 0.8, height * 0.5)
-    }
-
-    setLine()
-    window.addEventListener("resize", setLine)
-
-    // デバッグモードの設定
-    peopleCounter.setDebugMode(debugMode)
-
-    // 人物検出ループ
-    const detectLoop = () => {
-      if (remoteImageRef.current && canvas) {
-        peopleCounter.detectPeople(remoteImageRef.current, canvas)
-      }
-      animationFrameIdRef.current = requestAnimationFrame(detectLoop)
-    }
-
-    // モデルを読み込んで検出を開始
-    peopleCounter.loadModel().then(() => {
-      animationFrameIdRef.current = requestAnimationFrame(detectLoop)
-    })
-
-    return () => {
-      if (animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current)
-      }
-      window.removeEventListener("resize", setLine)
-    }
-  }, [showPeopleCounter, activeTab, showIframe, debugMode, imageLoaded])
+  }, [showPeopleCounter])
 
   // 品質設定の変更
   const handleQualityChange = (value: string) => {
@@ -333,7 +300,6 @@ export default function Home() {
                         className="hidden"
                         alt="カメラ映像"
                         crossOrigin="anonymous"
-                        onLoad={handleImageLoad}
                         width={640}
                         height={480}
                       />
