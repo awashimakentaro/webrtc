@@ -128,8 +128,8 @@ export async function GET(request: NextRequest) {
           location.reload();
         });
         
-        // 初期状態ではデバッグを非表示
-        debugDiv.style.display = 'none';
+        // 初期状態ではデバッグを表示
+        debugDiv.style.display = 'block';
         
         function log(message) {
           console.log(message);
@@ -143,9 +143,8 @@ export async function GET(request: NextRequest) {
         const embedded = ${embedded};
         let peer;
         let localStream;
-        let conn;
-        let currentCall;
-
+        let connection;
+        
         // ビデオ要素
         const localVideo = document.getElementById('localVideo');
         const remoteVideo = document.getElementById('remoteVideo');
@@ -170,17 +169,17 @@ export async function GET(request: NextRequest) {
         }
 
         updateStatus("接続中...");
-
-        // PeerJSの初期化
-        function initPeer(userId) {
-          log('PeerJS初期化: ' + userId);
+        
+        // 単純化されたPeerJS実装
+        function startConnection() {
+          // ピアIDの設定
+          const peerId = mode === 'camera' ? 'camera-' + roomId : 'viewer-' + roomId;
           
-          // 既存のピア接続を破棄
-          if (peer) {
-            peer.destroy();
-          }
+          log('PeerJS初期化: ' + peerId);
           
-          peer = new Peer(userId, {
+          // PeerJSの設定
+          const peerConfig = {
+            debug: 3,
             config: {
               'iceServers': [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -188,59 +187,150 @@ export async function GET(request: NextRequest) {
                 { urls: 'stun:stun2.l.google.com:19302' },
                 { urls: 'stun:stun3.l.google.com:19302' },
                 { urls: 'stun:stun4.l.google.com:19302' },
-                { urls: 'stun:stun.stunprotocol.org:3478' }
+                { urls: 'stun:stun.stunprotocol.org:3478' },
+                {
+                  urls: 'turn:numb.viagenie.ca',
+                  credential: 'muazkh',
+                  username: 'webrtc@live.com'
+                }
               ]
-            },
-            debug: 2
-          });
-
-          peer.on('open', (id) => {
+            }
+          };
+          
+          // PeerJSインスタンスの作成
+          peer = new Peer(peerId, peerConfig);
+          
+          // 接続イベント
+          peer.on('open', id => {
             log('ピア接続確立: ' + id);
-            updateStatus("ピアサーバーに接続しました");
+            updateStatus('ピアサーバーに接続しました');
             
-            if (mode === "camera") {
+            if (mode === 'camera') {
               // カメラモードの場合は待機
-              updateStatus("視聴者からの接続を待機中...");
-            } else if (mode === "viewer") {
+              updateStatus('視聴者からの接続を待機中...');
+            } else {
               // 視聴モードの場合はカメラに接続
               connectToCamera();
             }
           });
-
-          peer.on('error', (err) => {
+          
+          // エラーイベント
+          peer.on('error', err => {
             log('ピアエラー: ' + err.type);
-            updateStatus("エラーが発生しました: " + err.type);
-          });
-
-          // 着信コールの処理
-          peer.on('call', (call) => {
-            currentCall = call;
-            log('着信コール受信');
-            updateStatus("着信コールを受信しました");
+            updateStatus('エラーが発生しました: ' + err.type);
             
-            // カメラモードの場合、ローカルストリームで応答
-            if (mode === "camera" && localStream) {
-              log('ローカルストリームで応答');
-              call.answer(localStream);
-              updateStatus("コールに応答しました");
-            } else {
-              log('空のストリームで応答');
-              call.answer();
+            // 既に使用されているIDの場合は、ランダムなIDで再試行
+            if (err.type === 'unavailable-id') {
+              const randomId = Math.random().toString(36).substring(2, 8);
+              const newPeerId = mode === 'camera' ? 'camera-' + randomId : 'viewer-' + randomId;
+              log('新しいIDで再試行: ' + newPeerId);
+              peer = new Peer(newPeerId, peerConfig);
             }
+          });
+          
+          // カメラモードの場合の着信処理
+          if (mode === 'camera') {
+            // 着信コール処理
+            peer.on('call', call => {
+              log('着信コール受信');
+              updateStatus('着信コールを受信しました');
+              
+              // ローカルストリームで応答
+              call.answer(localStream);
+              log('ローカルストリームで応答');
+              updateStatus('コールに応答しました');
+              
+              // リモートストリーム受信時の処理
+              call.on('stream', stream => {
+                log('リモートストリーム受信（カメラモード）');
+                // カメラモードでは視聴者からのストリームは表示しない
+              });
+              
+              // エラー処理
+              call.on('error', err => {
+                log('コールエラー: ' + err);
+                updateStatus('コールエラー: ' + err);
+              });
+              
+              // 切断処理
+              call.on('close', () => {
+                log('コール終了');
+                updateStatus('コールが終了しました');
+              });
+            });
             
-            call.on('stream', (remoteStream) => {
-              log('リモートストリーム受信');
-              updateStatus("接続済み");
+            // データ接続処理
+            peer.on('connection', conn => {
+              connection = conn;
+              log('データ接続確立（カメラモード）');
+              
+              conn.on('data', data => {
+                log('データ受信: ' + JSON.stringify(data));
+                
+                // pingに対してpongで応答
+                if (data.type === 'ping') {
+                  conn.send({ type: 'pong', timestamp: Date.now() });
+                }
+              });
+              
+              conn.on('open', () => {
+                log('データチャネルオープン');
+                updateStatus('視聴者と接続しました');
+                
+                // 定期的にステータスを送信
+                setInterval(() => {
+                  if (conn.open) {
+                    conn.send({ 
+                      type: 'status', 
+                      streaming: true,
+                      timestamp: Date.now() 
+                    });
+                  }
+                }, 5000);
+              });
+              
+              conn.on('close', () => {
+                log('データ接続終了');
+                updateStatus('視聴者との接続が終了しました');
+              });
+            });
+          }
+        }
+        
+        // 視聴モードでカメラに接続
+        function connectToCamera() {
+          const targetId = 'camera-' + roomId;
+          log('カメラに接続: ' + targetId);
+          updateStatus('カメラに接続中...');
+          
+          // データ接続
+          connection = peer.connect(targetId);
+          
+          connection.on('open', () => {
+            log('データ接続確立（視聴モード）');
+            updateStatus('カメラとデータ接続しました');
+            
+            // pingを送信
+            connection.send({ type: 'ping', timestamp: Date.now() });
+            
+            // カメラからのビデオストリームを要求
+            const call = peer.call(targetId, new MediaStream());
+            log('発信コール送信');
+            
+            // リモートストリーム受信時の処理
+            call.on('stream', stream => {
+              log('リモートストリーム受信（視聴モード）');
+              updateStatus('接続済み');
               
               // ストリームの内容をログ
-              const tracks = remoteStream.getTracks();
+              const tracks = stream.getTracks();
               log(\`受信したトラック数: \${tracks.length}\`);
               tracks.forEach((track, i) => {
                 log(\`トラック\${i+1}: \${track.kind} - \${track.readyState}\`);
               });
               
               // ビデオ要素にストリームをセット
-              remoteVideo.srcObject = remoteStream;
+              remoteVideo.srcObject = stream;
               remoteVideo.classList.remove('hidden');
               
               // ビデオの読み込みイベント
@@ -248,110 +338,47 @@ export async function GET(request: NextRequest) {
                 log('ビデオメタデータ読み込み完了');
                 remoteVideo.play().catch(e => log('ビデオ再生エラー: ' + e));
               };
-              
-              // エラーイベント
-              remoteVideo.onerror = (e) => {
-                log('ビデオエラー: ' + e);
-              };
             });
             
-            call.on('error', (err) => {
+            // エラー処理
+            call.on('error', err => {
               log('コールエラー: ' + err);
-              updateStatus("コールエラー: " + err);
+              updateStatus('コールエラー: ' + err);
             });
             
+            // 切断処理
             call.on('close', () => {
               log('コール終了');
-              updateStatus("コールが終了しました");
+              updateStatus('コールが終了しました');
               remoteVideo.classList.add('hidden');
             });
           });
-
-          // データ接続の処理
-          peer.on('connection', (dataConn) => {
-            conn = dataConn;
-            log('データ接続確立');
-            
-            conn.on('data', (data) => {
-              log('データ受信: ' + JSON.stringify(data));
-            });
-            
-            conn.on('close', () => {
-              log('データ接続終了');
-            });
-          });
-        }
-
-        // カメラに接続
-        function connectToCamera() {
-          const targetId = roomId + "-camera";
-          log('カメラに接続: ' + targetId);
-          updateStatus("カメラに接続中...");
           
-          // データ接続
-          conn = peer.connect(targetId);
-          
-          conn.on('open', () => {
-            log('データ接続確立');
-            conn.send({ type: 'hello', message: 'ビューアーから接続しました' });
+          connection.on('data', data => {
+            log('データ受信: ' + JSON.stringify(data));
             
-            // ビデオ通話
-            if (mode === "viewer") {
-              // 空のストリームを作成
-              const emptyStream = new MediaStream();
-              currentCall = peer.call(targetId, emptyStream);
-              log('発信コール送信');
-              
-              currentCall.on('stream', (remoteStream) => {
-                log('リモートストリーム受信');
-                updateStatus("接続済み");
-                
-                // ストリームの内容をログ
-                const tracks = remoteStream.getTracks();
-                log(\`受信したトラック数: \${tracks.length}\`);
-                tracks.forEach((track, i) => {
-                  log(\`トラック\${i+1}: \${track.kind} - \${track.readyState}\`);
-                });
-                
-                // ビデオ要素にストリームをセット
-                remoteVideo.srcObject = remoteStream;
-                remoteVideo.classList.remove('hidden');
-                
-                // ビデオの読み込みイベント
-                remoteVideo.onloadedmetadata = () => {
-                  log('ビデオメタデータ読み込み完了');
-                  remoteVideo.play().catch(e => log('ビデオ再生エラー: ' + e));
-                };
-                
-                // エラーイベント
-                remoteVideo.onerror = (e) => {
-                  log('ビデオエラー: ' + e);
-                };
-              });
-              
-              currentCall.on('error', (err) => {
-                log('コールエラー: ' + err);
-                updateStatus("コールエラー: " + err);
-              });
-              
-              currentCall.on('close', () => {
-                log('コール終了');
-                updateStatus("コールが終了しました");
-                remoteVideo.classList.add('hidden');
-              });
+            // カメラからのステータス更新
+            if (data.type === 'status' && data.streaming) {
+              updateStatus('接続済み - ストリーミング中');
             }
           });
           
-          conn.on('error', (err) => {
+          connection.on('error', err => {
             log('データ接続エラー: ' + err);
-            updateStatus("接続エラー: " + err);
+            updateStatus('接続エラー: ' + err);
+          });
+          
+          connection.on('close', () => {
+            log('データ接続終了');
+            updateStatus('カメラとの接続が終了しました');
           });
         }
-
+        
         // カメラモードの場合はカメラを起動
-        if (mode === "camera") {
+        if (mode === 'camera') {
           localVideo.classList.remove('hidden');
           
+          // カメラへのアクセス
           navigator.mediaDevices.getUserMedia({ 
             video: { 
               facingMode: { ideal: "environment" },
@@ -372,32 +399,29 @@ export async function GET(request: NextRequest) {
             });
             
             log('カメラアクセス成功');
-            updateStatus("カメラ準備完了");
+            updateStatus('カメラ準備完了');
             
-            // PeerJSの初期化
-            initPeer(roomId + "-camera");
+            // 接続開始
+            startConnection();
           })
           .catch(err => {
             log('カメラエラー: ' + err.message);
-            updateStatus("カメラへのアクセスに失敗しました: " + err.message);
+            updateStatus('カメラへのアクセスに失敗しました: ' + err.message);
           });
         } 
         // 視聴モードの場合
-        else if (mode === "viewer") {
+        else if (mode === 'viewer') {
           remoteVideo.classList.remove('hidden');
           log('視聴モード開始');
           
-          // PeerJSの初期化
-          initPeer(roomId + "-viewer");
+          // 接続開始
+          startConnection();
         }
 
         // ページを離れる前に接続を閉じる
         window.onbeforeunload = () => {
           if (localStream) {
             localStream.getTracks().forEach(track => track.stop());
-          }
-          if (currentCall) {
-            currentCall.close();
           }
           if (peer) {
             peer.destroy();
