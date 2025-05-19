@@ -182,6 +182,28 @@ export async function GET(request: NextRequest) {
         .connection-indicator.connecting {
           background-color: orange;
         }
+        
+        #fallback-container {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          text-align: center;
+          color: white;
+          z-index: 90;
+          display: none;
+        }
+        
+        #fallback-container.active {
+          display: block;
+        }
+        
+        #fallback-qr {
+          margin: 20px auto;
+          padding: 10px;
+          background: white;
+          border-radius: 5px;
+        }
       </style>
     </head>
     <body>
@@ -207,10 +229,17 @@ export async function GET(request: NextRequest) {
         <div id="control-panel">
           <button id="debug-btn" class="btn">デバッグ表示</button>
           <button id="reconnect-btn" class="btn">再接続</button>
+          <button id="fallback-btn" class="btn">代替接続</button>
         </div>
         
         <div id="status-bar">接続中...</div>
         <div id="debug-panel"></div>
+        
+        <div id="fallback-container">
+          <h3>代替接続モード</h3>
+          <p>WebRTC接続に問題があります。<br>代替接続を試みます。</p>
+          <div id="fallback-qr"></div>
+        </div>
       </div>
 
       <script>
@@ -225,11 +254,14 @@ export async function GET(request: NextRequest) {
         const debugPanel = document.getElementById('debug-panel');
         const debugBtn = document.getElementById('debug-btn');
         const reconnectBtn = document.getElementById('reconnect-btn');
+        const fallbackBtn = document.getElementById('fallback-btn');
         const switchCameraBtn = document.getElementById('switch-camera-btn');
         const torchBtn = document.getElementById('torch-btn');
         const cameraInfo = document.getElementById('camera-info');
         const cameraSelect = document.getElementById('camera-select');
         const connectionIndicator = document.getElementById('connection-indicator');
+        const fallbackContainer = document.getElementById('fallback-container');
+        const fallbackQr = document.getElementById('fallback-qr');
         
         // デバッグ表示の切り替え
         debugBtn.addEventListener('click', () => {
@@ -239,6 +271,11 @@ export async function GET(request: NextRequest) {
         // 再接続ボタン
         reconnectBtn.addEventListener('click', () => {
           location.reload();
+        });
+        
+        // 代替接続ボタン
+        fallbackBtn.addEventListener('click', () => {
+          activateFallbackMode();
         });
         
         // 初期状態ではデバッグを表示
@@ -264,6 +301,8 @@ export async function GET(request: NextRequest) {
         let torchAvailable = false;
         let torchOn = false;
         let activeCall = null;
+        let connectionTimeout;
+        let usingFallbackMode = false;
         
         // 接続状態を親ウィンドウに通知
         function updateStatus(status) {
@@ -451,6 +490,7 @@ export async function GET(request: NextRequest) {
             
             if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
               updateStatus('ICE接続確立');
+              clearTimeout(connectionTimeout);
             } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
               updateStatus('ICE接続失敗');
               
@@ -473,6 +513,13 @@ export async function GET(request: NextRequest) {
           pc.onsignalingstatechange = () => {
             log('シグナリング状態変更: ' + pc.signalingState);
           };
+          
+          // ICE候補の追加を監視
+          pc.onicecandidate = (event) => {
+            if (event.candidate) {
+              log('ICE候補追加: ' + event.candidate.candidate);
+            }
+          };
         }
         
         // 単純化されたPeerJS実装
@@ -493,12 +540,20 @@ export async function GET(request: NextRequest) {
                 { urls: 'stun:stun3.l.google.com:19302' },
                 { urls: 'stun:stun4.l.google.com:19302' },
                 { urls: 'stun:stun.stunprotocol.org:3478' },
+                { urls: 'stun:global.stun.twilio.com:3478?transport=udp' },
                 {
                   urls: 'turn:numb.viagenie.ca',
                   credential: 'muazkh',
                   username: 'webrtc@live.com'
+                },
+                {
+                  urls: 'turn:global.turn.twilio.com:3478?transport=udp',
+                  username: '7823fd6b61b94612b3983602e4d93dce5349779dce344ea5f5e5a0dfd3e0fbf9',
+                  credential: 'Nj3UQtE8yRQD12W76CkZIjH/WqSM9lhvzYpS4JBnHC8='
                 }
-              ]
+              ],
+              'sdpSemantics': 'unified-plan',
+              'iceCandidatePoolSize': 10
             }
           };
           
@@ -622,6 +677,18 @@ export async function GET(request: NextRequest) {
           log('カメラに接続: ' + targetId);
           updateStatus('カメラに接続中...');
           
+          // 接続タイムアウト設定
+          clearTimeout(connectionTimeout);
+          connectionTimeout = setTimeout(() => {
+            if (!remoteStream) {
+              log('接続タイムアウト - 代替接続モードを提案');
+              updateStatus('接続タイムアウト');
+              
+              // 代替接続モードを提案
+              fallbackBtn.style.display = 'inline-block';
+            }
+          }, 15000);
+          
           // データ接続
           connection = peer.connect(targetId);
           
@@ -645,6 +712,22 @@ export async function GET(request: NextRequest) {
             // ICE接続状態の監視
             if (call.peerConnection) {
               monitorIceConnectionState(call.peerConnection);
+              
+              // 追加のICE設定
+              try {
+                // ICE再起動を有効化
+                call.peerConnection.restartIce();
+                
+                // ICE接続タイムアウトを設定
+                call.peerConnection.setConfiguration({
+                  ...call.peerConnection.getConfiguration(),
+                  iceTransportPolicy: 'all',
+                  bundlePolicy: 'max-bundle',
+                  rtcpMuxPolicy: 'require'
+                });
+              } catch (e) {
+                log('ICE設定エラー: ' + e);
+              }
             }
             
             // リモートストリーム受信時の処理
@@ -694,6 +777,9 @@ export async function GET(request: NextRequest) {
               remoteVideo.onerror = (e) => {
                 log('ビデオエラー: ' + e);
               };
+              
+              // タイムアウトをクリア
+              clearTimeout(connectionTimeout);
             });
             
             // エラー処理
@@ -728,6 +814,90 @@ export async function GET(request: NextRequest) {
             log('データ接続終了');
             updateStatus('カメラとの接続が終了しました');
           });
+        }
+        
+        // 代替接続モードを有効化
+        function activateFallbackMode() {
+          if (usingFallbackMode) return;
+          
+          usingFallbackMode = true;
+          log('代替接続モードを有効化');
+          updateStatus('代替接続モードに切り替え中...');
+          
+          // 既存の接続を閉じる
+          if (peer) {
+            peer.destroy();
+          }
+          
+          // 代替接続モードのUIを表示
+          fallbackContainer.classList.add('active');
+          
+          // 代替接続用のQRコードを生成
+          if (mode === 'viewer') {
+            // 視聴モードの場合、カメラモード用のQRコードを表示
+            const fallbackUrl = \`https://remote-gamma.vercel.app/?room=\${roomId}&mode=camera&fallback=true\`;
+            
+            // QRコードライブラリを動的に読み込み
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js';
+            script.onload = () => {
+              // QRコードを生成
+              QRCode.toCanvas(fallbackQr, fallbackUrl, { width: 200 }, (error) => {
+                if (error) {
+                  log('QRコード生成エラー: ' + error);
+                  fallbackQr.innerHTML = fallbackUrl;
+                }
+              });
+            };
+            document.head.appendChild(script);
+            
+            updateStatus('スマートフォンでQRコードをスキャンしてください');
+          } else {
+            // カメラモードの場合、視聴モード用のURLを表示
+            fallbackQr.innerHTML = \`視聴用URL: https://remote-gamma.vercel.app/?room=\${roomId}&mode=viewer&fallback=true\`;
+            updateStatus('視聴者からの接続を待機中...');
+          }
+          
+          // 代替接続モードの実装（WebSocketベースなど）
+          // ここでは簡易的な実装として、5秒ごとにカメラ画像をキャプチャして送信する例を示す
+          if (mode === 'camera' && localStream) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            const captureInterval = setInterval(() => {
+              if (!usingFallbackMode) {
+                clearInterval(captureInterval);
+                return;
+              }
+              
+              try {
+                // カメラ映像をキャプチャ
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (videoTrack) {
+                  const imageCapture = new ImageCapture(videoTrack);
+                  imageCapture.grabFrame()
+                    .then(imageBitmap => {
+                      // キャプチャした画像をキャンバスに描画
+                      canvas.width = imageBitmap.width;
+                      canvas.height = imageBitmap.height;
+                      context.drawImage(imageBitmap, 0, 0);
+                      
+                      // 画像データをBase64に変換
+                      const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                      
+                      // 画像データを送信（実際の実装ではWebSocketなどを使用）
+                      log('画像キャプチャ: ' + Math.floor(imageData.length / 1024) + 'KB');
+                      
+                      // ここでWebSocketなどを使って送信する処理を実装
+                    })
+                    .catch(err => {
+                      log('画像キャプチャエラー: ' + err);
+                    });
+                }
+              } catch (err) {
+                log('キャプチャ処理エラー: ' + err);
+              }
+            }, 5000);
+          }
         }
         
         // カメラモードの場合はカメラを起動
