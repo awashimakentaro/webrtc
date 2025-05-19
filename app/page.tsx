@@ -68,7 +68,7 @@ export default function Home() {
 
   return (
     <div className="container flex items-center justify-center min-h-screen py-8">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
           <CardDescription className="text-center">
@@ -132,11 +132,11 @@ export default function Home() {
                 </div>
 
                 {!showIframe ? (
-                  <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                  <div className="relative h-[400px] md:h-[500px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
                     カメラが接続されるとここに映像が表示されます
                   </div>
                 ) : (
-                  <div className="relative">
+                  <div className="relative h-[400px] md:h-[500px]">
                     <div className="absolute top-2 right-2 z-10">
                       <Button
                         variant="outline"
@@ -150,7 +150,7 @@ export default function Home() {
                     <iframe
                       ref={iframeRef}
                       src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
-                      className="w-full aspect-video rounded-md border-0"
+                      className="w-full h-full rounded-md border-0"
                       allow="camera;microphone"
                       title="リモートカメラ"
                     />
@@ -194,11 +194,11 @@ export default function Home() {
                 </div>
 
                 {!showIframe ? (
-                  <div className="relative aspect-video bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                  <div className="relative h-[400px] md:h-[500px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
                     「カメラを開始」ボタンをクリックしてカメラを起動します
                   </div>
                 ) : (
-                  <div className="relative">
+                  <div className="relative h-[400px] md:h-[500px]">
                     <div className="absolute top-2 right-2 z-10">
                       <Button
                         variant="outline"
@@ -212,7 +212,7 @@ export default function Home() {
                     <iframe
                       ref={iframeRef}
                       src={`/api/connect?room=${roomId}&mode=camera&embedded=true`}
-                      className="w-full aspect-video rounded-md border-0"
+                      className="w-full h-full rounded-md border-0"
                       allow="camera;microphone"
                       title="カメラプレビュー"
                     />
