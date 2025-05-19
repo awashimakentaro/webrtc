@@ -576,20 +576,33 @@ export async function GET(request: NextRequest) {
             }
           };
           
-          pc.onicegatheringstatechange = () => {
-            log('ICE収集状態変更: ' + pc.iceGatheringState);
-          };
-          
-          pc.onsignalingstatechange = () => {
-            log('シグナリング状態変更: ' + pc.signalingState);
-          };
-          
-          // ICE候補の追加を監視
+          // ICE候補の詳細ログを追加
           pc.onicecandidate = (event) => {
             if (event.candidate) {
-              log('ICE候補追加: ' + event.candidate.candidate);
+              log('ICE候補追加: ' + JSON.stringify(event.candidate));
+            } else {
+              log('ICE候補収集完了');
             }
           };
+          
+          // 接続統計情報の定期的な収集
+          if (mode === 'viewer') {
+            const statsInterval = setInterval(() => {
+              if (pc.connectionState === 'connected') {
+                pc.getStats().then(stats => {
+                  stats.forEach(report => {
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                      log('受信統計: フレーム数=' + report.framesReceived + 
+                          ', デコード数=' + report.framesDecoded + 
+                          ', 破棄数=' + report.framesDropped);
+                    }
+                  });
+                });
+              } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                clearInterval(statsInterval);
+              }
+            }, 5000);
+          }
         }
         
         // 単純化されたPeerJS実装
@@ -758,11 +771,11 @@ export async function GET(request: NextRequest) {
           clearTimeout(connectionTimeout);
           connectionTimeout = setTimeout(() => {
             if (!remoteStream) {
-              log('接続タイムアウト - 代替接続モードを提案');
-              updateStatus('接続タイムアウト');
+              log('接続タイムアウト - 代替接続モードに自動切り替え');
+              updateStatus('接続タイムアウト - 代替モードに切り替えます');
               
-              // 代替接続モードを提案
-              fallbackBtn.style.display = 'inline-block';
+              // 代替接続モードを自動的に有効化
+              activateFallbackMode();
             }
           }, 15000);
           
@@ -961,8 +974,8 @@ export async function GET(request: NextRequest) {
                   canvas.height = localVideo.videoHeight;
                   context.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
                   
-                  // 画像データをBase64に変換（低品質で軽量化）
-                  const imageData = canvas.toDataURL('image/jpeg', 0.5);
+                  // 画像データをBase64に変換（品質と更新頻度のバランスを調整）
+                  const imageData = canvas.toDataURL('image/jpeg', 0.7);
                   
                   // 画像データを送信
                   if (connection && connection.open) {
@@ -977,7 +990,7 @@ export async function GET(request: NextRequest) {
               } catch (err) {
                 log('画像キャプチャエラー: ' + err);
               }
-            }, 1000); // 1秒ごとに送信
+            }, 500); // 0.5秒ごとに送信（更新頻度を上げる）
           }
         }
         
