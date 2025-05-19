@@ -41,14 +41,37 @@ export async function GET(request: NextRequest) {
           z-index: 10;
           font-size: 14px;
         }
+        .video-container {
+          position: relative;
+          width: 100%;
+          height: calc(100% - 40px);
+          overflow: hidden;
+          background-color: #000;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+        }
         video { 
           width: 100%; 
           height: 100%; 
           object-fit: contain; 
           background-color: #000;
+        }
+        .camera-preview {
           position: absolute;
           top: 0;
           left: 0;
+          width: 100%;
+          height: 100%;
+          z-index: 5;
+        }
+        .remote-view {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          z-index: 4;
         }
         .hidden { 
           display: none !important; 
@@ -71,13 +94,6 @@ export async function GET(request: NextRequest) {
           width: 100%;
           overflow: hidden;
         }
-        .video-container {
-          position: relative;
-          width: 100%;
-          height: calc(100% - 40px);
-          overflow: hidden;
-          background-color: #000;
-        }
         .controls {
           position: absolute;
           bottom: 10px;
@@ -98,25 +114,65 @@ export async function GET(request: NextRequest) {
         .btn:hover {
           background: rgba(255,255,255,0.3);
         }
+        .camera-info {
+          position: absolute;
+          top: 10px;
+          left: 10px;
+          background: rgba(0,0,0,0.5);
+          color: white;
+          padding: 5px;
+          font-size: 12px;
+          z-index: 15;
+          border-radius: 4px;
+        }
+        .torch-btn {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          z-index: 15;
+        }
+        .camera-select {
+          position: absolute;
+          top: 50px;
+          right: 10px;
+          z-index: 15;
+          background: rgba(0,0,0,0.5);
+          color: white;
+          border: 1px solid white;
+          border-radius: 4px;
+          padding: 5px;
+        }
       </style>
     </head>
     <body class="${embedded ? "embedded" : ""}">
       <div class="video-container">
-        <video id="localVideo" autoplay playsinline muted class="hidden"></video>
-        <video id="remoteVideo" autoplay playsinline class="hidden"></video>
+        <div class="camera-preview">
+          <video id="localVideo" autoplay playsinline muted></video>
+        </div>
+        <div class="remote-view">
+          <video id="remoteVideo" autoplay playsinline></video>
+        </div>
       </div>
       <div id="status">接続中...</div>
       <div id="debug"></div>
       <div class="controls">
         <button id="debugBtn" class="btn">デバッグ表示</button>
         <button id="reconnectBtn" class="btn">再接続</button>
+        <button id="switchCameraBtn" class="btn">カメラ切替</button>
       </div>
+      <div class="camera-info" id="cameraInfo"></div>
+      <button id="torchBtn" class="torch-btn btn">ライト ON/OFF</button>
+      <select id="cameraSelect" class="camera-select hidden"></select>
 
       <script>
         // デバッグログ
         const debugDiv = document.getElementById('debug');
         const debugBtn = document.getElementById('debugBtn');
         const reconnectBtn = document.getElementById('reconnectBtn');
+        const switchCameraBtn = document.getElementById('switchCameraBtn');
+        const torchBtn = document.getElementById('torchBtn');
+        const cameraInfo = document.getElementById('cameraInfo');
+        const cameraSelect = document.getElementById('cameraSelect');
         
         // デバッグ表示の切り替え
         debugBtn.addEventListener('click', () => {
@@ -144,11 +200,25 @@ export async function GET(request: NextRequest) {
         let peer;
         let localStream;
         let connection;
+        let currentFacingMode = "environment"; // デフォルトは背面カメラ
+        let torchAvailable = false;
+        let torchOn = false;
         
         // ビデオ要素
         const localVideo = document.getElementById('localVideo');
         const remoteVideo = document.getElementById('remoteVideo');
         const statusDiv = document.getElementById('status');
+        
+        // カメラ関連のUIを初期化
+        if (mode === 'camera') {
+          document.querySelector('.remote-view').classList.add('hidden');
+          switchCameraBtn.classList.remove('hidden');
+          torchBtn.classList.remove('hidden');
+        } else {
+          document.querySelector('.camera-preview').classList.add('hidden');
+          switchCameraBtn.classList.add('hidden');
+          torchBtn.classList.add('hidden');
+        }
 
         // 接続状態を親ウィンドウに通知
         function updateStatus(status) {
@@ -169,6 +239,152 @@ export async function GET(request: NextRequest) {
         }
 
         updateStatus("接続中...");
+        
+        // カメラ情報を表示
+        function updateCameraInfo() {
+          if (mode === 'camera' && localStream) {
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+              const settings = videoTrack.getSettings();
+              cameraInfo.innerHTML = \`
+                カメラ: \${videoTrack.label}<br>
+                解像度: \${settings.width}x\${settings.height}<br>
+                向き: \${currentFacingMode === 'environment' ? '背面' : '前面'}<br>
+                ライト: \${torchAvailable ? (torchOn ? 'ON' : 'OFF') : '非対応'}
+              \`;
+            }
+          }
+        }
+        
+        // 利用可能なカメラを取得
+        async function getAvailableCameras() {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+            log('カメラ一覧の取得に対応していません');
+            return [];
+          }
+          
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cameras = devices.filter(device => device.kind === 'videoinput');
+            log(\`利用可能なカメラ: \${cameras.length}台\`);
+            
+            // カメラ選択肢を更新
+            cameraSelect.innerHTML = '';
+            cameras.forEach((camera, index) => {
+              const option = document.createElement('option');
+              option.value = camera.deviceId;
+              option.text = camera.label || \`カメラ \${index + 1}\`;
+              cameraSelect.appendChild(option);
+            });
+            
+            if (cameras.length > 1) {
+              cameraSelect.classList.remove('hidden');
+              cameraSelect.addEventListener('change', () => {
+                const deviceId = cameraSelect.value;
+                switchCamera({ deviceId: { exact: deviceId } });
+              });
+            }
+            
+            return cameras;
+          } catch (err) {
+            log('カメラ一覧の取得エラー: ' + err);
+            return [];
+          }
+        }
+        
+        // カメラを切り替える
+        async function switchCamera(constraints = null) {
+          if (!localStream) return;
+          
+          // 既存のトラックを停止
+          localStream.getTracks().forEach(track => track.stop());
+          
+          // 新しいカメラ設定
+          const newConstraints = constraints || {
+            video: { 
+              facingMode: { exact: currentFacingMode === 'environment' ? 'user' : 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            },
+            audio: true
+          };
+          
+          try {
+            // 新しいストリームを取得
+            const newStream = await navigator.mediaDevices.getUserMedia(newConstraints);
+            localStream = newStream;
+            localVideo.srcObject = newStream;
+            
+            // カメラの向きを更新
+            const videoTrack = newStream.getVideoTracks()[0];
+            if (videoTrack) {
+              const settings = videoTrack.getSettings();
+              currentFacingMode = settings.facingMode || 
+                                 (constraints && constraints.video.facingMode ? 
+                                  (constraints.video.facingMode.exact || currentFacingMode) : 
+                                  currentFacingMode === 'environment' ? 'user' : 'environment');
+              
+              // ライト機能の確認
+              checkTorchAvailability(videoTrack);
+            }
+            
+            // カメラ情報を更新
+            updateCameraInfo();
+            
+            log(\`カメラを切り替えました: \${currentFacingMode}\`);
+            
+            // 接続中の場合は再接続
+            if (peer && peer.open) {
+              // 既存の接続を閉じる
+              if (peer) {
+                peer.destroy();
+              }
+              
+              // 再接続
+              startConnection();
+            }
+          } catch (err) {
+            log('カメラ切り替えエラー: ' + err);
+            updateStatus('カメラの切り替えに失敗しました: ' + err);
+          }
+        }
+        
+        // ライト機能の確認
+        function checkTorchAvailability(videoTrack) {
+          if (!videoTrack) return;
+          
+          const capabilities = videoTrack.getCapabilities();
+          torchAvailable = capabilities.torch || false;
+          
+          if (torchAvailable) {
+            torchBtn.disabled = false;
+            torchBtn.addEventListener('click', toggleTorch);
+          } else {
+            torchBtn.disabled = true;
+          }
+        }
+        
+        // ライトのON/OFF切り替え
+        async function toggleTorch() {
+          if (!localStream || !torchAvailable) return;
+          
+          const videoTrack = localStream.getVideoTracks()[0];
+          if (!videoTrack) return;
+          
+          try {
+            torchOn = !torchOn;
+            await videoTrack.applyConstraints({
+              advanced: [{ torch: torchOn }]
+            });
+            log(\`ライト: \${torchOn ? 'ON' : 'OFF'}\`);
+            updateCameraInfo();
+          } catch (err) {
+            log('ライト切り替えエラー: ' + err);
+          }
+        }
+        
+        // カメラ切り替えボタンのイベント
+        switchCameraBtn.addEventListener('click', () => switchCamera());
         
         // 単純化されたPeerJS実装
         function startConnection() {
@@ -331,7 +547,6 @@ export async function GET(request: NextRequest) {
               
               // ビデオ要素にストリームをセット
               remoteVideo.srcObject = stream;
-              remoteVideo.classList.remove('hidden');
               
               // ビデオの読み込みイベント
               remoteVideo.onloadedmetadata = () => {
@@ -350,7 +565,6 @@ export async function GET(request: NextRequest) {
             call.on('close', () => {
               log('コール終了');
               updateStatus('コールが終了しました');
-              remoteVideo.classList.add('hidden');
             });
           });
           
@@ -376,8 +590,6 @@ export async function GET(request: NextRequest) {
         
         // カメラモードの場合はカメラを起動
         if (mode === 'camera') {
-          localVideo.classList.remove('hidden');
-          
           // カメラへのアクセス
           navigator.mediaDevices.getUserMedia({ 
             video: { 
@@ -398,6 +610,16 @@ export async function GET(request: NextRequest) {
               log(\`トラック\${i+1}: \${track.kind} - \${track.readyState}\`);
             });
             
+            // カメラ情報を表示
+            const videoTrack = stream.getVideoTracks()[0];
+            if (videoTrack) {
+              checkTorchAvailability(videoTrack);
+              updateCameraInfo();
+            }
+            
+            // 利用可能なカメラを取得
+            getAvailableCameras();
+            
             log('カメラアクセス成功');
             updateStatus('カメラ準備完了');
             
@@ -411,7 +633,6 @@ export async function GET(request: NextRequest) {
         } 
         // 視聴モードの場合
         else if (mode === 'viewer') {
-          remoteVideo.classList.remove('hidden');
           log('視聴モード開始');
           
           // 接続開始
