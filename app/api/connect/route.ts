@@ -21,162 +21,198 @@ export async function GET(request: NextRequest) {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
       <style>
-        body { 
-          margin: 0; 
-          font-family: sans-serif;
-          overflow: hidden;
+        * {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
+        }
+        
+        html, body {
           width: 100%;
-          height: 100vh;
+          height: 100%;
+          overflow: hidden;
+          background-color: #000;
+          font-family: sans-serif;
+        }
+        
+        #app {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+        }
+        
+        #video-container {
+          flex: 1;
+          position: relative;
+          background-color: #000;
+          overflow: hidden;
+        }
+        
+        #local-video-container,
+        #remote-video-container {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
           background-color: #000;
         }
-        #status { 
-          padding: 10px; 
-          text-align: center; 
+        
+        #local-video,
+        #remote-video {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          background-color: #000;
+        }
+        
+        #status-bar {
           position: absolute;
           bottom: 0;
           left: 0;
           right: 0;
-          background: rgba(0,0,0,0.5);
+          padding: 10px;
+          background: rgba(0,0,0,0.7);
           color: white;
-          z-index: 10;
+          text-align: center;
           font-size: 14px;
+          z-index: 100;
         }
-        .video-container {
-          position: relative;
-          width: 100%;
-          height: calc(100% - 40px);
-          overflow: hidden;
-          background-color: #000;
+        
+        #debug-panel {
+          position: fixed;
+          bottom: 50px;
+          left: 10px;
+          right: 10px;
+          max-height: 150px;
+          overflow-y: auto;
+          background: rgba(0,0,0,0.7);
+          color: white;
+          padding: 10px;
+          font-size: 12px;
+          z-index: 100;
+          border-radius: 5px;
+          display: none;
+        }
+        
+        #control-panel {
+          position: absolute;
+          bottom: 60px;
+          left: 0;
+          right: 0;
           display: flex;
           justify-content: center;
-          align-items: center;
-        }
-        video { 
-          width: 100%; 
-          height: 100%; 
-          object-fit: contain; 
-          background-color: #000;
-        }
-        .camera-preview {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          z-index: 5;
-        }
-        .remote-view {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          z-index: 4;
-        }
-        .hidden { 
-          display: none !important; 
-        }
-        #debug { 
-          position: fixed; 
-          bottom: 40px; 
-          left: 10px; 
-          background: rgba(0,0,0,0.5); 
-          color: white; 
-          padding: 5px; 
-          font-size: 12px; 
-          max-width: 80%; 
-          overflow: auto; 
-          max-height: 100px;
-          z-index: 20;
-        }
-        .embedded {
-          height: 100%;
-          width: 100%;
-          overflow: hidden;
-        }
-        .controls {
-          position: absolute;
-          bottom: 10px;
-          left: 50%;
-          transform: translateX(-50%);
-          z-index: 30;
-          display: flex;
           gap: 10px;
+          padding: 10px;
+          z-index: 100;
         }
+        
         .btn {
           background: rgba(255,255,255,0.2);
           border: none;
           color: white;
-          padding: 5px 10px;
-          border-radius: 4px;
+          padding: 8px 15px;
+          border-radius: 20px;
           cursor: pointer;
+          font-size: 14px;
         }
+        
         .btn:hover {
           background: rgba(255,255,255,0.3);
         }
-        .camera-info {
+        
+        .btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        
+        #camera-info {
           position: absolute;
           top: 10px;
           left: 10px;
-          background: rgba(0,0,0,0.5);
+          background: rgba(0,0,0,0.7);
           color: white;
-          padding: 5px;
+          padding: 8px;
           font-size: 12px;
-          z-index: 15;
-          border-radius: 4px;
+          z-index: 100;
+          border-radius: 5px;
         }
-        .torch-btn {
+        
+        #camera-controls {
           position: absolute;
           top: 10px;
           right: 10px;
-          z-index: 15;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          z-index: 100;
         }
-        .camera-select {
-          position: absolute;
-          top: 50px;
-          right: 10px;
-          z-index: 15;
-          background: rgba(0,0,0,0.5);
+        
+        #camera-select {
+          background: rgba(0,0,0,0.7);
           color: white;
-          border: 1px solid white;
-          border-radius: 4px;
+          border: 1px solid rgba(255,255,255,0.3);
+          border-radius: 5px;
           padding: 5px;
+          font-size: 12px;
+        }
+        
+        .hidden {
+          display: none !important;
         }
       </style>
     </head>
-    <body class="${embedded ? "embedded" : ""}">
-      <div class="video-container">
-        <div class="camera-preview">
-          <video id="localVideo" autoplay playsinline muted></video>
+    <body>
+      <div id="app">
+        <div id="video-container">
+          <div id="local-video-container" class="${mode === "viewer" ? "hidden" : ""}">
+            <video id="local-video" autoplay playsinline muted></video>
+          </div>
+          <div id="remote-video-container" class="${mode === "camera" ? "hidden" : ""}">
+            <video id="remote-video" autoplay playsinline></video>
+          </div>
         </div>
-        <div class="remote-view">
-          <video id="remoteVideo" autoplay playsinline></video>
+        
+        <div id="camera-info" class="${mode === "viewer" ? "hidden" : ""}"></div>
+        
+        <div id="camera-controls" class="${mode === "viewer" ? "hidden" : ""}">
+          <button id="switch-camera-btn" class="btn">カメラ切替</button>
+          <button id="torch-btn" class="btn" disabled>ライト ON/OFF</button>
+          <select id="camera-select" class="hidden"></select>
         </div>
+        
+        <div id="control-panel">
+          <button id="debug-btn" class="btn">デバッグ表示</button>
+          <button id="reconnect-btn" class="btn">再接続</button>
+        </div>
+        
+        <div id="status-bar">接続中...</div>
+        <div id="debug-panel"></div>
       </div>
-      <div id="status">接続中...</div>
-      <div id="debug"></div>
-      <div class="controls">
-        <button id="debugBtn" class="btn">デバッグ表示</button>
-        <button id="reconnectBtn" class="btn">再接続</button>
-        <button id="switchCameraBtn" class="btn">カメラ切替</button>
-      </div>
-      <div class="camera-info" id="cameraInfo"></div>
-      <button id="torchBtn" class="torch-btn btn">ライト ON/OFF</button>
-      <select id="cameraSelect" class="camera-select hidden"></select>
 
       <script>
-        // デバッグログ
-        const debugDiv = document.getElementById('debug');
-        const debugBtn = document.getElementById('debugBtn');
-        const reconnectBtn = document.getElementById('reconnectBtn');
-        const switchCameraBtn = document.getElementById('switchCameraBtn');
-        const torchBtn = document.getElementById('torchBtn');
-        const cameraInfo = document.getElementById('cameraInfo');
-        const cameraSelect = document.getElementById('cameraSelect');
+        // DOM要素
+        const app = document.getElementById('app');
+        const videoContainer = document.getElementById('video-container');
+        const localVideoContainer = document.getElementById('local-video-container');
+        const remoteVideoContainer = document.getElementById('remote-video-container');
+        const localVideo = document.getElementById('local-video');
+        const remoteVideo = document.getElementById('remote-video');
+        const statusBar = document.getElementById('status-bar');
+        const debugPanel = document.getElementById('debug-panel');
+        const debugBtn = document.getElementById('debug-btn');
+        const reconnectBtn = document.getElementById('reconnect-btn');
+        const switchCameraBtn = document.getElementById('switch-camera-btn');
+        const torchBtn = document.getElementById('torch-btn');
+        const cameraInfo = document.getElementById('camera-info');
+        const cameraSelect = document.getElementById('camera-select');
         
         // デバッグ表示の切り替え
         debugBtn.addEventListener('click', () => {
-          debugDiv.style.display = debugDiv.style.display === 'none' ? 'block' : 'none';
+          debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
         });
         
         // 再接続ボタン
@@ -184,16 +220,15 @@ export async function GET(request: NextRequest) {
           location.reload();
         });
         
-        // 初期状態ではデバッグを表示
-        debugDiv.style.display = 'block';
-        
+        // ログ関数
         function log(message) {
           console.log(message);
           const timestamp = new Date().toLocaleTimeString();
-          debugDiv.innerHTML += \`[\${timestamp}] \${message}<br>\`;
-          debugDiv.scrollTop = debugDiv.scrollHeight;
+          debugPanel.innerHTML += \`[\${timestamp}] \${message}<br>\`;
+          debugPanel.scrollTop = debugPanel.scrollHeight;
         }
 
+        // 基本設定
         const roomId = "${roomId}";
         const mode = "${mode}";
         const embedded = ${embedded};
@@ -204,25 +239,9 @@ export async function GET(request: NextRequest) {
         let torchAvailable = false;
         let torchOn = false;
         
-        // ビデオ要素
-        const localVideo = document.getElementById('localVideo');
-        const remoteVideo = document.getElementById('remoteVideo');
-        const statusDiv = document.getElementById('status');
-        
-        // カメラ関連のUIを初期化
-        if (mode === 'camera') {
-          document.querySelector('.remote-view').classList.add('hidden');
-          switchCameraBtn.classList.remove('hidden');
-          torchBtn.classList.remove('hidden');
-        } else {
-          document.querySelector('.camera-preview').classList.add('hidden');
-          switchCameraBtn.classList.add('hidden');
-          torchBtn.classList.add('hidden');
-        }
-
         // 接続状態を親ウィンドウに通知
         function updateStatus(status) {
-          statusDiv.textContent = status;
+          statusBar.textContent = status;
           log('ステータス更新: ' + status);
           
           // 埋め込みモードの場合、親ウィンドウに通知
@@ -313,6 +332,8 @@ export async function GET(request: NextRequest) {
             // 新しいストリームを取得
             const newStream = await navigator.mediaDevices.getUserMedia(newConstraints);
             localStream = newStream;
+            
+            // ビデオ要素にストリームをセット
             localVideo.srcObject = newStream;
             
             // カメラの向きを更新
@@ -601,7 +622,15 @@ export async function GET(request: NextRequest) {
           })
           .then(stream => {
             localStream = stream;
+            
+            // ビデオ要素にストリームをセット
             localVideo.srcObject = stream;
+            
+            // ビデオの読み込みイベント
+            localVideo.onloadedmetadata = () => {
+              log('ローカルビデオメタデータ読み込み完了');
+              localVideo.play().catch(e => log('ローカルビデオ再生エラー: ' + e));
+            };
             
             // ストリームの内容をログ
             const tracks = stream.getTracks();
@@ -648,6 +677,32 @@ export async function GET(request: NextRequest) {
             peer.destroy();
           }
         };
+        
+        // iOS Safariでのカメラ表示問題対策
+        if (mode === 'camera') {
+          // iOSのSafariでのカメラ表示問題を解決するための追加対策
+          document.addEventListener('click', () => {
+            if (localVideo && localVideo.paused && localStream) {
+              log('ユーザー操作によるビデオ再生試行');
+              localVideo.play().catch(e => log('ビデオ再生エラー: ' + e));
+            }
+          }, { once: true });
+          
+          // ビデオ要素のサイズを明示的に設定
+          setTimeout(() => {
+            const videoWidth = localVideoContainer.clientWidth;
+            const videoHeight = localVideoContainer.clientHeight;
+            log(\`ビデオコンテナサイズ: \${videoWidth}x\${videoHeight}\`);
+            
+            // ビデオ要素のスタイルを強制的に設定
+            localVideo.style.width = '100%';
+            localVideo.style.height = '100%';
+            localVideo.style.objectFit = 'contain';
+            
+            // ビデオ要素の表示を確認
+            log(\`ローカルビデオ表示状態: \${window.getComputedStyle(localVideo).display}\`);
+          }, 1000);
+        }
       </script>
     </body>
     </html>
