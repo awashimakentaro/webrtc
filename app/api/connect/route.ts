@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     <head>
       <title>WebRTC Connection</title>
       <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="viewport" content="width=device-width, initial-scale: 1.0">
       <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
       <style>
@@ -50,6 +50,9 @@ export async function GET(request: NextRequest) {
           position: relative;
           background-color: #000;
           overflow: hidden;
+          width: 100%;
+          height: 100vh;
+          max-height: calc(100vh - 40px); /* ステータスバーの高さを考慮 */
         }
         
         #local-video-container,
@@ -61,13 +64,16 @@ export async function GET(request: NextRequest) {
           height: 100%;
           overflow: hidden;
           background-color: #000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
         
         #local-video,
         #remote-video {
           width: 100%;
           height: 100%;
-          object-fit: contain;
+          object-fit: cover;
           background-color: #000;
         }
         
@@ -108,7 +114,7 @@ export async function GET(request: NextRequest) {
         /* コントロールパネルを下部に配置し、ステータスバーと重ならないように */
         #control-panel {
           position: absolute;
-          bottom: 40px;
+          bottom: 50px;
           left: 0;
           right: 0;
           display: flex;
@@ -230,12 +236,13 @@ export async function GET(request: NextRequest) {
         }
         
         #fallback-image {
-          max-width: 100%;
-          max-height: 70vh;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
           display: block;
-          margin: 0 auto;
-          border: 1px solid rgba(255,255,255,0.3);
-          border-radius: 5px;
+          margin: 0;
+          border: none;
+          border-radius: 0;
         }
         
         /* デバッグボタンを右下に固定 */
@@ -300,6 +307,7 @@ export async function GET(request: NextRequest) {
         <div id="control-panel">
           <button id="reconnect-btn" class="btn">再接続</button>
           <button id="fallback-btn" class="btn">代替接続</button>
+          <button id="fit-toggle-btn" class="btn">表示切替</button>
         </div>
         
         <button id="debug-btn" class="btn">デバッグ</button>
@@ -335,6 +343,11 @@ export async function GET(request: NextRequest) {
         const connectionIndicator = document.getElementById('connection-indicator');
         const fallbackContainer = document.getElementById('fallback-container');
         const fallbackQr = document.getElementById('fallback-qr');
+        
+        const fitToggleBtn = document.getElementById('fit-toggle-btn');
+
+        // 表示切替ボタンのイベントリスナー
+        fitToggleBtn.addEventListener('click', toggleVideoFit);
         
         // デバッグ表示の切り替え
         debugBtn.addEventListener('click', () => {
@@ -379,6 +392,7 @@ export async function GET(request: NextRequest) {
         let usingFallbackMode = initialFallback;
         let fallbackInterval;
         let iceConnectionCheckInterval;
+        let connectionStartTime = Date.now();
         
         // 接続状態を親ウィンドウに通知
         function updateStatus(status) {
@@ -714,6 +728,39 @@ export async function GET(request: NextRequest) {
           }, 5000);
         }
         
+        // ビデオ表示モードの切り替え（contain/cover）
+        function toggleVideoFit() {
+          const videoElements = [localVideo, remoteVideo];
+          
+          videoElements.forEach(video => {
+            if (video) {
+              const currentFit = video.style.objectFit;
+              video.style.objectFit = currentFit === 'cover' ? 'contain' : 'cover';
+              log(\`ビデオ表示モード: \${video.style.objectFit}\`);
+            }
+          });
+          
+          // フォールバック画像も同様に
+          if (fallbackImage) {
+            fallbackImage.style.objectFit = fallbackImage.style.objectFit === 'cover' ? 'contain' : 'cover';
+          }
+        }
+
+        // ダブルタップでビデオ表示モードを切り替える
+        videoContainer.addEventListener('dblclick', toggleVideoFit);
+
+        // タッチデバイス用のダブルタップ検出
+        let lastTap = 0;
+        videoContainer.addEventListener('touchend', function(e) {
+          const currentTime = new Date().getTime();
+          const tapLength = currentTime - lastTap;
+          if (tapLength < 500 && tapLength > 0) {
+            toggleVideoFit();
+            e.preventDefault();
+          }
+          lastTap = currentTime;
+        });
+        
         // 単純化されたPeerJS実装
         function startConnection() {
           // 代替接続モードの場合は処理しない
@@ -819,6 +866,12 @@ export async function GET(request: NextRequest) {
                   startConnection();
                 }
               }, 3000);
+            } else if (err.type === 'webrtc') {
+              // WebRTCエラーの場合は代替接続モードに切り替え
+              log('WebRTCエラー - 代替接続モードに切り替えます');
+              setTimeout(() => {
+                activateFallbackMode();
+              }, 1000);
             }
           });
           
@@ -931,6 +984,9 @@ export async function GET(request: NextRequest) {
           log('カメラに接続: ' + targetId);
           updateStatus('カメラに接続中...');
           
+          // 接続開始時間を記録
+          connectionStartTime = Date.now();
+          
           // 接続タイムアウト設定
           clearTimeout(connectionTimeout);
           connectionTimeout = setTimeout(() => {
@@ -976,8 +1032,21 @@ export async function GET(request: NextRequest) {
                     // ICE接続タイムアウトを短く設定
                     modifiedSdp += 'a=ice-options:trickle\\r\\n';
                     
-                    // バンド幅制限を緩和
-                    modifiedSdp += 'b=AS:2000\\r\\n';
+                    // 各メディアラインの後に帯域幅制限を追加
+                    const lines = modifiedSdp.split('\\r\\n');
+                    const newLines = [];
+                    
+                    for (let i = 0; i < lines.length; i++) {
+                      newLines.push(lines[i]);
+                      // m=video または m=audio の後に帯域幅制限を追加
+                      if (lines[i].startsWith('m=video')) {
+                        newLines.push('b=AS:2000');
+                      } else if (lines[i].startsWith('m=audio')) {
+                        newLines.push('b=AS:128');
+                      }
+                    }
+                    
+                    modifiedSdp = newLines.join('\\r\\n');
                     
                     log('SDP変換: ' + modifiedSdp.substring(0, 100) + '...');
                     
@@ -1000,14 +1069,7 @@ export async function GET(request: NextRequest) {
                     log('ネゴシエーション必要イベント発生');
                   });
                   
-                  // データチャネルの状態を監視
-                  const dataChannels = call.peerConnection.getDataChannels();
-                  if (dataChannels && dataChannels.length > 0) {
-                    log(\`データチャネル数: \${dataChannels.length}\`);
-                    dataChannels.forEach((dc, i) => {
-                      log(\`データチャネル\${i+1}の状態: \${dc.readyState}\`);
-                    });
-                  }
+                  // データチャネルの状態を監視 - getDataChannelsメソッドは存在しないので削除
                 }
                 
                 // リモートストリーム受信時の処理
@@ -1035,7 +1097,7 @@ export async function GET(request: NextRequest) {
                     // ビデオ要素のスタイルを強制的に設定
                     remoteVideo.style.width = '100%';
                     remoteVideo.style.height = '100%';
-                    remoteVideo.style.objectFit = 'contain';
+                    remoteVideo.style.objectFit = 'cover';
                     
                     // ビデオ再生
                     remoteVideo.play().catch(e => {
@@ -1077,6 +1139,11 @@ export async function GET(request: NextRequest) {
               } catch (err) {
                 log('コール作成エラー: ' + err);
                 updateStatus('コール作成エラー: ' + err);
+                
+                // エラーが発生した場合は代替接続モードに切り替え
+                setTimeout(() => {
+                  activateFallbackMode();
+                }, 1000);
               }
             });
             
@@ -1134,18 +1201,13 @@ export async function GET(request: NextRequest) {
             try {
               // QRコードを生成（既にライブラリは読み込み済み）
               QRCode.toCanvas(
-                document.createElement('canvas'), 
+                fallbackQr, 
                 fallbackUrl, 
                 { width: 200 }, 
-                (error, canvas) => {
+                (error) => {
                   if (error) {
                     log('QRコード生成エラー: ' + error);
                     fallbackQr.textContent = fallbackUrl;
-                  } else {
-                    // 既存の内容をクリア
-                    fallbackQr.innerHTML = '';
-                    // 生成したキャンバスを追加
-                    fallbackQr.appendChild(canvas);
                   }
                 }
               );
@@ -1272,7 +1334,7 @@ export async function GET(request: NextRequest) {
               // ビデオ要素のスタイルを強制的に設定
               localVideo.style.width = '100%';
               localVideo.style.height = '100%';
-              localVideo.style.objectFit = 'contain';
+              localVideo.style.objectFit = 'cover';
               
               // ビデオ再生
               localVideo.play().catch(e => {
@@ -1369,7 +1431,7 @@ export async function GET(request: NextRequest) {
             // ビデオ要素のスタイルを強制的に設定
             localVideo.style.width = '100%';
             localVideo.style.height = '100%';
-            localVideo.style.objectFit = 'contain';
+            localVideo.style.objectFit = 'cover';
             
             // ビデオ要素の表示を確認
             log(\`ローカルビデオ表示状態: \${window.getComputedStyle(localVideo).display}\`);
@@ -1398,9 +1460,6 @@ export async function GET(request: NextRequest) {
             }
           }, 10000);
           
-          // 接続開始時間を記録
-          const connectionStartTime = Date.now();
-          
           // ビデオ要素の表示を確認
           setTimeout(() => {
             if (remoteVideo) {
@@ -1411,7 +1470,7 @@ export async function GET(request: NextRequest) {
               // ビデオ要素のスタイルを強制的に設定
               remoteVideo.style.width = '100%';
               remoteVideo.style.height = '100%';
-              remoteVideo.style.objectFit = 'contain';
+              remoteVideo.style.objectFit = 'cover';
               
               // ビデオ要素の表示を確認
               log(\`リモートビデオ表示状態: \${window.getComputedStyle(remoteVideo).display}\`);
