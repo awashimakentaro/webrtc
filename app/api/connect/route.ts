@@ -890,7 +890,7 @@ export async function GET(request: NextRequest) {
                       data: data.data,
                       width: data.width,
                       height: data.height
-                    }, window.location.origin);
+                    }, '*'); // オリジン制限を緩和
                   } catch (e) {
                     log('画像データ送信エラー: ' + e);
                   }

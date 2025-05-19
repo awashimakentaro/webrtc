@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon, XIcon, Settings2Icon } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import PeopleCounterDisplay from "../components/people-counter-display"
+import PeopleCounterDisplay from "@/components/people-counter-display"
 import { PeopleCounter } from "@/utils/people-counter"
+import Script from "next/script"
 
 export default function Home() {
   const [roomId, setRoomId] = useState("")
@@ -21,11 +22,15 @@ export default function Home() {
   const [peopleCount, setPeopleCount] = useState({ leftToRight: 0, rightToLeft: 0, total: 0 })
   const [debugMode, setDebugMode] = useState(false)
   const [showPeopleCounter, setShowPeopleCounter] = useState(false)
+  const [tfReady, setTfReady] = useState(false)
+  const [modelReady, setModelReady] = useState(false)
+  const [imageLoaded, setImageLoaded] = useState(false)
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const peopleCounterRef = useRef<PeopleCounter | null>(null)
   const remoteImageRef = useRef<HTMLImageElement | null>(null)
+  const animationFrameIdRef = useRef<number | null>(null)
 
   // ページロード時に一意のルームIDを生成
   useEffect(() => {
@@ -60,12 +65,41 @@ export default function Home() {
     }
   }, [])
 
+  // TensorFlow.jsとCOCO-SSDモデルの読み込み状態を監視
+  useEffect(() => {
+    if (tfReady && modelReady && showPeopleCounter) {
+      initPeopleCounter()
+    }
+  }, [tfReady, modelReady, showPeopleCounter])
+
+  // 人物カウンターの初期化
+  const initPeopleCounter = () => {
+    if (!peopleCounterRef.current) {
+      peopleCounterRef.current = new PeopleCounter()
+      peopleCounterRef.current.setCountUpdateCallback(setPeopleCount)
+      peopleCounterRef.current.setDebugMode(debugMode)
+
+      // 画面の中央に横断ラインを設定
+      const width = window.innerWidth
+      const height = window.innerHeight
+      peopleCounterRef.current.setCrossingLine(width * 0.2, height * 0.5, width * 0.8, height * 0.5)
+
+      console.log("人物カウンター初期化完了")
+    }
+  }
+
   // メッセージイベントリスナー
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       // 接続状態の更新
       if (event.data && event.data.type === "connection-status") {
         setConnectionStatus(event.data.status)
+      }
+
+      // 画像データの受信（人物検出用）
+      if (event.data && event.data.type === "image-data" && remoteImageRef.current) {
+        remoteImageRef.current.src = event.data.data
+        setImageLoaded(true)
       }
     }
 
@@ -75,6 +109,54 @@ export default function Home() {
       window.removeEventListener("message", handleMessage)
     }
   }, [])
+
+  // 人物検出の実行
+  useEffect(() => {
+    if (!showPeopleCounter || activeTab !== "viewer" || !showIframe || !imageLoaded) return
+
+    // 既存のアニメーションフレームをキャンセル
+    if (animationFrameIdRef.current) {
+      cancelAnimationFrame(animationFrameIdRef.current)
+    }
+
+    const peopleCounter = peopleCounterRef.current
+    const canvas = canvasRef.current
+
+    if (!peopleCounter || !canvas) return
+
+    // 画面の中央に横断ラインを設定
+    const setLine = () => {
+      const width = canvas.width || window.innerWidth
+      const height = canvas.height || window.innerHeight
+      peopleCounter.setCrossingLine(width * 0.2, height * 0.5, width * 0.8, height * 0.5)
+    }
+
+    setLine()
+    window.addEventListener("resize", setLine)
+
+    // デバッグモードの設定
+    peopleCounter.setDebugMode(debugMode)
+
+    // 人物検出ループ
+    const detectLoop = () => {
+      if (remoteImageRef.current && canvas) {
+        peopleCounter.detectPeople(remoteImageRef.current, canvas)
+      }
+      animationFrameIdRef.current = requestAnimationFrame(detectLoop)
+    }
+
+    // モデルを読み込んで検出を開始
+    peopleCounter.loadModel().then(() => {
+      animationFrameIdRef.current = requestAnimationFrame(detectLoop)
+    })
+
+    return () => {
+      if (animationFrameIdRef.current) {
+        cancelAnimationFrame(animationFrameIdRef.current)
+      }
+      window.removeEventListener("resize", setLine)
+    }
+  }, [showPeopleCounter, activeTab, showIframe, debugMode, imageLoaded])
 
   // 品質設定の変更
   const handleQualityChange = (value: string) => {
@@ -90,92 +172,6 @@ export default function Home() {
     }
   }
 
-  // 人物カウンターの初期化
-  useEffect(() => {
-    // TensorFlow.jsとCOCO-SSDモデルのスクリプトを動的に読み込み
-    const loadTensorflowScripts = async () => {
-      try {
-        // TensorFlow.jsのスクリプトを読み込み
-        const tfScript = document.createElement("script")
-        tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"
-        tfScript.async = true
-        document.body.appendChild(tfScript)
-
-        // COCO-SSDモデルのスクリプトを読み込み
-        const cocoSsdScript = document.createElement("script")
-        cocoSsdScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"
-        cocoSsdScript.async = true
-        document.body.appendChild(cocoSsdScript)
-
-        // スクリプトの読み込みを待機
-        await new Promise((resolve) => {
-          cocoSsdScript.onload = resolve
-        })
-
-        console.log("TensorFlow.jsとCOCO-SSDモデルを読み込みました")
-      } catch (error) {
-        console.error("スクリプト読み込みエラー:", error)
-      }
-    }
-
-    loadTensorflowScripts()
-
-    // 人物カウンターのインスタンスを作成
-    peopleCounterRef.current = new PeopleCounter()
-    peopleCounterRef.current.setCountUpdateCallback(setPeopleCount)
-
-    return () => {
-      // クリーンアップ処理
-    }
-  }, [])
-
-  // 人物検出の実行
-  useEffect(() => {
-    if (!showPeopleCounter || activeTab !== "viewer" || !showIframe) return
-
-    let animationFrameId: number
-    const peopleCounter = peopleCounterRef.current
-    const canvas = canvasRef.current
-
-    if (!peopleCounter || !canvas) return
-
-    // 画面の中央に横断ラインを設定
-    const setLine = () => {
-      const width = window.innerWidth
-      const height = window.innerHeight
-      peopleCounter.setCrossingLine(width * 0.2, height * 0.5, width * 0.8, height * 0.5)
-    }
-
-    setLine()
-    window.addEventListener("resize", setLine)
-
-    // デバッグモードの設定
-    peopleCounter.setDebugMode(debugMode)
-
-    // 人物検出ループ
-    const detectLoop = () => {
-      if (remoteImageRef.current && canvas) {
-        peopleCounter.detectPeople(remoteImageRef.current, canvas)
-      }
-      animationFrameId = requestAnimationFrame(detectLoop)
-    }
-
-    // モデルを読み込んで検出を開始
-    peopleCounter.loadModel().then(() => {
-      animationFrameId = requestAnimationFrame(detectLoop)
-    })
-
-    return () => {
-      cancelAnimationFrame(animationFrameId)
-      window.removeEventListener("resize", setLine)
-    }
-  }, [showPeopleCounter, activeTab, showIframe, debugMode])
-
-  // リモート画像の参照を取得するためのコールバック
-  const handleRemoteImageRef = (node: HTMLImageElement | null) => {
-    remoteImageRef.current = node
-  }
-
   // 人物カウントのリセット
   const resetPeopleCount = () => {
     if (peopleCounterRef.current) {
@@ -186,10 +182,50 @@ export default function Home() {
   // デバッグモードの切り替え
   const toggleDebugMode = () => {
     setDebugMode(!debugMode)
+    if (peopleCounterRef.current) {
+      peopleCounterRef.current.setDebugMode(!debugMode)
+    }
+  }
+
+  // 人物カウント機能の切り替え
+  const togglePeopleCounter = () => {
+    if (!showPeopleCounter && !tfReady) {
+      // 人物カウントを初めて有効にする場合、スクリプトを読み込む
+      setShowPeopleCounter(true)
+    } else {
+      setShowPeopleCounter(!showPeopleCounter)
+    }
+  }
+
+  // 画像の読み込み完了イベント
+  const handleImageLoad = () => {
+    setImageLoaded(true)
   }
 
   return (
     <div className="container flex items-center justify-center min-h-screen py-4">
+      {/* TensorFlow.jsとCOCO-SSDモデルのスクリプト読み込み */}
+      {showPeopleCounter && (
+        <>
+          <Script
+            src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"
+            strategy="afterInteractive"
+            onLoad={() => {
+              console.log("TensorFlow.js読み込み完了")
+              setTfReady(true)
+            }}
+          />
+          <Script
+            src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"
+            strategy="afterInteractive"
+            onLoad={() => {
+              console.log("COCO-SSDモデル読み込み完了")
+              setModelReady(true)
+            }}
+          />
+        </>
+      )}
+
       <Card className="w-full max-w-4xl">
         <CardHeader className="pb-2">
           <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
@@ -289,25 +325,28 @@ export default function Home() {
                       />
                     )}
 
-                    {/* iframeの代わりに使用する画像要素（人物検出用） */}
-                    {showPeopleCounter ? (
-                      <div className="w-full h-full rounded-md border-0 overflow-hidden">
-                        <img
-                          ref={handleRemoteImageRef}
-                          id="remote-image-for-detection"
-                          className="w-full h-full object-contain"
-                          alt="カメラ映像"
-                        />
-                      </div>
-                    ) : (
-                      <iframe
-                        ref={iframeRef}
-                        src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
-                        className="w-full h-full rounded-md border-0"
-                        allow="camera;microphone"
-                        title="リモートカメラ"
+                    {/* 人物検出用の非表示画像要素 */}
+                    {showPeopleCounter && (
+                      <img
+                        ref={remoteImageRef}
+                        id="remote-image-for-detection"
+                        className="hidden"
+                        alt="カメラ映像"
+                        crossOrigin="anonymous"
+                        onLoad={handleImageLoad}
+                        width={640}
+                        height={480}
                       />
                     )}
+
+                    {/* 常に表示するiframe */}
+                    <iframe
+                      ref={iframeRef}
+                      src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
+                      className="w-full h-full rounded-md border-0"
+                      allow="camera;microphone"
+                      title="リモートカメラ"
+                    />
                   </div>
                 )}
               </div>
@@ -318,10 +357,7 @@ export default function Home() {
                 </Button>
 
                 {showIframe && (
-                  <Button
-                    variant={showPeopleCounter ? "default" : "outline"}
-                    onClick={() => setShowPeopleCounter(!showPeopleCounter)}
-                  >
+                  <Button variant={showPeopleCounter ? "default" : "outline"} onClick={togglePeopleCounter}>
                     人物カウント {showPeopleCounter ? "オフ" : "オン"}
                   </Button>
                 )}

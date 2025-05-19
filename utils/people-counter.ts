@@ -22,10 +22,13 @@ export class PeopleCounter {
   
       this.isModelLoading = true
       try {
-        // @ts-ignore - TensorFlow.jsとCOCO-SSDモデルの動的インポート
-        const cocoSsd = await import("@tensorflow-models/coco-ssd")
-        this.model = await cocoSsd.load()
-        console.log("人物検出モデルを読み込みました")
+        // グローバルオブジェクトからCOCO-SSDモデルを取得
+        if (typeof window !== "undefined" && (window as any).cocoSsd) {
+          this.model = await (window as any).cocoSsd.load()
+          console.log("人物検出モデルを読み込みました")
+        } else {
+          console.error("COCO-SSDモデルが見つかりません")
+        }
       } catch (error) {
         console.error("モデル読み込みエラー:", error)
       } finally {
@@ -60,8 +63,10 @@ export class PeopleCounter {
       this.lastDetectionTime = now
   
       try {
-        // 人物検出の実行
-        const predictions = await this.model.detect(imageElement)
+        // 画像が読み込まれているか確認
+        if (imageElement instanceof HTMLImageElement && !imageElement.complete) {
+          return
+        }
   
         // キャンバスのコンテキスト取得
         const ctx = canvas.getContext("2d")
@@ -71,13 +76,31 @@ export class PeopleCounter {
         ctx.clearRect(0, 0, canvas.width, canvas.height)
   
         // 画像サイズに合わせてキャンバスをリサイズ
-        canvas.width = imageElement.width || imageElement.clientWidth
-        canvas.height = imageElement.height || imageElement.clientHeight
+        // naturalWidthの代わりに、より安全な方法でサイズを取得
+        let imgWidth = 0
+        let imgHeight = 0
+  
+        if (imageElement instanceof HTMLImageElement) {
+          // 画像要素の場合
+          imgWidth = imageElement.width || imageElement.clientWidth || 640
+          imgHeight = imageElement.height || imageElement.clientHeight || 480
+        } else {
+          // ビデオ要素の場合
+          imgWidth = imageElement.videoWidth || imageElement.clientWidth || 640
+          imgHeight = imageElement.videoHeight || imageElement.clientHeight || 480
+        }
+  
+        // キャンバスのサイズを設定
+        canvas.width = imgWidth
+        canvas.height = imgHeight
   
         // デバッグモードの場合は横断ラインを描画
         if (this.debugMode) {
           this.drawCrossingLine(ctx)
         }
+  
+        // 人物検出の実行
+        const predictions = await this.model.detect(imageElement)
   
         // 人物の検出と追跡
         this.trackPeople(predictions, ctx)
