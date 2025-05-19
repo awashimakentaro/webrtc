@@ -30,7 +30,7 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const peopleCounterRef = useRef<PeopleCounter | null>(null)
   const remoteImageRef = useRef<HTMLImageElement | null>(null)
-  const animationFrameIdRef = useRef<number | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // ページロード時に一意のルームIDを生成
   useEffect(() => {
@@ -83,19 +83,44 @@ export default function Home() {
       })
       peopleCounterRef.current.setDebugMode(debugMode)
 
-      // 画面の中央に横断ラインを設定
-      const width = canvasRef.current?.width || window.innerWidth
-      const height = canvasRef.current?.height || window.innerHeight
-      peopleCounterRef.current.setCrossingLine(width * 0.2, height * 0.5, width * 0.8, height * 0.5)
-
-      // モデルを読み込む
-      peopleCounterRef.current.loadModel().then(() => {
-        console.log("人物検出モデルの読み込みが完了しました")
-      })
+      // 横断ラインを設定
+      updateCrossingLine()
 
       console.log("人物カウンター初期化完了")
     }
   }
+
+  // 横断ラインの更新
+  const updateCrossingLine = () => {
+    if (!peopleCounterRef.current || !containerRef.current) return
+
+    // コンテナの寸法を取得
+    const containerRect = containerRef.current.getBoundingClientRect()
+    const width = containerRect.width
+    const height = containerRect.height
+
+    // 画面の中央に横断ラインを設定（左から右へ）
+    peopleCounterRef.current.setCrossingLine(
+      width * 0.2, // 左端から20%の位置
+      height * 0.5, // 上端から50%の位置
+      width * 0.8, // 左端から80%の位置
+      height * 0.5, // 上端から50%の位置
+    )
+  }
+
+  // ウィンドウサイズ変更時に横断ラインを更新
+  useEffect(() => {
+    if (!showPeopleCounter) return
+
+    const handleResize = () => {
+      updateCrossingLine()
+    }
+
+    window.addEventListener("resize", handleResize)
+    return () => {
+      window.removeEventListener("resize", handleResize)
+    }
+  }, [showPeopleCounter])
 
   // メッセージイベントリスナー
   useEffect(() => {
@@ -148,9 +173,10 @@ export default function Home() {
 
   // デバッグモードの切り替え
   const toggleDebugMode = () => {
-    setDebugMode(!debugMode)
+    const newDebugMode = !debugMode
+    setDebugMode(newDebugMode)
     if (peopleCounterRef.current) {
-      peopleCounterRef.current.setDebugMode(!debugMode)
+      peopleCounterRef.current.setDebugMode(newDebugMode)
     }
   }
 
@@ -162,11 +188,6 @@ export default function Home() {
     } else {
       setShowPeopleCounter(!showPeopleCounter)
     }
-  }
-
-  // 画像の読み込み完了イベント
-  const handleImageLoad = () => {
-    setImageLoaded(true)
   }
 
   return (
@@ -272,7 +293,7 @@ export default function Home() {
                     カメラが接続されるとここに映像が表示されます
                   </div>
                 ) : (
-                  <div className="relative h-[500px] md:h-[600px]">
+                  <div ref={containerRef} className="relative h-[500px] md:h-[600px]">
                     <div className="absolute top-2 right-2 z-10">
                       <Button
                         variant="outline"
