@@ -70,14 +70,14 @@ export async function GET(request: NextRequest) {
         #local-video {
           width: 100%;
           height: 100%;
-          object-fit: cover;
+          object-fit: contain;
           background-color: #000;
         }
         
         #remote-image {
           width: 100%;
           height: 100%;
-          object-fit: cover;
+          object-fit: contain;
           background-color: #000;
         }
         
@@ -276,9 +276,9 @@ export async function GET(request: NextRequest) {
         
         <div id="quality-controls" class="${mode === "camera" ? "" : "hidden"}">
           <select id="quality-select">
-            <option value="high">高品質 (低FPS)</option>
+            <option value="high">高画質 (低FPS)</option>
             <option value="medium" selected>標準 (中FPS)</option>
-            <option value="low">低品質 (高FPS)</option>
+            <option value="low">低画質 (高FPS)</option>
           </select>
         </div>
         
@@ -746,7 +746,7 @@ export async function GET(request: NextRequest) {
                 
                 // 品質設定の変更リクエスト
                 if (data.type === 'quality-change') {
-                  log('品質設定変更リクエスト: ' + data.quality);
+                  log('��質設定変更リクエスト: ' + data.quality);
                   qualitySelect.value = data.quality;
                   qualitySelect.dispatchEvent(new Event('change'));
                 }
@@ -933,7 +933,7 @@ export async function GET(request: NextRequest) {
               // ビデオ要素のスタイルを強制的に設定
               localVideo.style.width = '100%';
               localVideo.style.height = '100%';
-              localVideo.style.objectFit = 'cover';
+              localVideo.style.objectFit = 'contain';
               
               // ビデオ再生
               localVideo.play().catch(e => {
@@ -986,7 +986,7 @@ export async function GET(request: NextRequest) {
           // リモート画像の初期設定
           remoteImage.style.width = '100%';
           remoteImage.style.height = '100%';
-          remoteImage.style.objectFit = 'cover';
+          remoteImage.style.objectFit = 'contain';
           
           // 接続開始
           startConnection();
@@ -1025,7 +1025,7 @@ export async function GET(request: NextRequest) {
             // ビデオ要素のスタイルを強制的に設定
             localVideo.style.width = '100%';
             localVideo.style.height = '100%';
-            localVideo.style.objectFit = 'cover';
+            localVideo.style.objectFit = 'contain';
             
             // ビデオ要素の表示を確認
             log(\`ローカルビデオ表示状態: \${window.getComputedStyle(localVideo).display}\`);
@@ -1042,6 +1042,18 @@ export async function GET(request: NextRequest) {
             }
           }, 10000);
         }
+        
+        // 親ウィンドウからのメッセージを受信
+        window.addEventListener('message', (event) => {
+          if (event.origin === window.location.origin) {
+            // 品質設定の変更
+            if (event.data && event.data.type === 'quality-change') {
+              log('親ウィンドウから品質設定変更: ' + event.data.quality);
+              qualitySelect.value = event.data.quality;
+              qualitySelect.dispatchEvent(new Event('change'));
+            }
+          }
+        });
       </script>
     </body>
     </html>

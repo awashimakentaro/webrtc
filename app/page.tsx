@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon, XIcon, Settings2Icon } from "lucide-react"
-import QRCode from "./components/qr-code"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export default function Home() {
@@ -25,7 +24,7 @@ export default function Home() {
     setRoomId(generatedRoomId)
   }, [])
 
-  // QRコード用のURL生成
+  // 接続URLの生成
   const cameraUrl = typeof window !== "undefined" ? `${window.location.origin}?room=${roomId}&mode=camera` : ""
 
   // クリップボードにコピー
@@ -83,15 +82,15 @@ export default function Home() {
   }
 
   return (
-    <div className="container flex items-center justify-center min-h-screen py-8">
-      <Card className="w-full max-w-2xl">
-        <CardHeader>
+    <div className="container flex items-center justify-center min-h-screen py-4">
+      <Card className="w-full max-w-4xl">
+        <CardHeader className="pb-2">
           <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
           <CardDescription className="text-center">スマートフォンカメラの映像をブラウザに表示します</CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-2 mb-4">
               <TabsTrigger value="viewer">
                 <MonitorIcon className="w-4 h-4 mr-2" />
                 視聴モード（PC）
@@ -103,72 +102,67 @@ export default function Home() {
             </TabsList>
 
             <TabsContent value="viewer" className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="room-id">ルームID</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="room-id"
-                    value={roomId}
-                    onChange={(e) => setRoomId(e.target.value)}
-                    placeholder="ルームIDを入力"
-                  />
-                  <Button variant="outline" size="icon" onClick={copyToClipboard}>
-                    <CopyIcon className="w-4 h-4" />
-                  </Button>
-                </div>
-                {isCopied && <p className="text-xs text-green-500">コピーしました！</p>}
-              </div>
-
-              <div className="mt-4">
-                <p className="text-sm mb-2">スマートフォンでこのQRコードをスキャンしてください：</p>
-                <div className="flex justify-center p-4 bg-white rounded-md">
-                  <QRCode value={cameraUrl} size={200} />
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2">
-                    <WifiIcon className="w-4 h-4" />
-                    <p className="text-sm">
-                      接続状態:{" "}
-                      <span
-                        className={
-                          connectionStatus.includes("接続済み")
-                            ? "text-green-500"
-                            : connectionStatus.includes("接続中")
-                              ? "text-amber-500"
-                              : "text-gray-500"
-                        }
-                      >
-                        {connectionStatus}
-                      </span>
-                    </p>
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Label htmlFor="room-id" className="text-sm">
+                    ルームID
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="room-id"
+                      value={roomId}
+                      onChange={(e) => setRoomId(e.target.value)}
+                      placeholder="ルームIDを入力"
+                    />
+                    <Button variant="outline" size="icon" onClick={copyToClipboard}>
+                      <CopyIcon className="w-4 h-4" />
+                    </Button>
                   </div>
-
-                  {showIframe && (
-                    <div className="flex items-center gap-2">
-                      <Settings2Icon className="w-4 h-4" />
-                      <Select value={quality} onValueChange={handleQualityChange}>
-                        <SelectTrigger className="w-[120px] h-8">
-                          <SelectValue placeholder="画質設定" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="high">高画質 (低FPS)</SelectItem>
-                          <SelectItem value="medium">標準 (中FPS)</SelectItem>
-                          <SelectItem value="low">低画質 (高FPS)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
+                  {isCopied && <p className="text-xs text-green-500">コピーしました！</p>}
                 </div>
 
+                <div className="flex items-center gap-2">
+                  <WifiIcon className="w-4 h-4" />
+                  <p className="text-sm whitespace-nowrap">
+                    接続状態:{" "}
+                    <span
+                      className={
+                        connectionStatus.includes("接続済み")
+                          ? "text-green-500"
+                          : connectionStatus.includes("接続中")
+                            ? "text-amber-500"
+                            : "text-gray-500"
+                      }
+                    >
+                      {connectionStatus}
+                    </span>
+                  </p>
+                </div>
+
+                {showIframe && (
+                  <div className="flex items-center gap-2">
+                    <Settings2Icon className="w-4 h-4" />
+                    <Select value={quality} onValueChange={handleQualityChange}>
+                      <SelectTrigger className="w-[120px] h-8">
+                        <SelectValue placeholder="画質設定" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="high">高画質 (低FPS)</SelectItem>
+                        <SelectItem value="medium">標準 (中FPS)</SelectItem>
+                        <SelectItem value="low">低画質 (高FPS)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-2">
                 {!showIframe ? (
-                  <div className="relative h-[400px] md:h-[500px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                  <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
                     カメラが接続されるとここに映像が表示されます
                   </div>
                 ) : (
-                  <div className="relative h-[400px] md:h-[500px]">
+                  <div className="relative h-[500px] md:h-[600px]">
                     <div className="absolute top-2 right-2 z-10">
                       <Button
                         variant="outline"
@@ -196,20 +190,22 @@ export default function Home() {
             </TabsContent>
 
             <TabsContent value="camera" className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="camera-room-id">ルームID</Label>
-                <Input
-                  id="camera-room-id"
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  placeholder="ルームIDを入力"
-                />
-              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Label htmlFor="camera-room-id" className="text-sm">
+                    ルームID
+                  </Label>
+                  <Input
+                    id="camera-room-id"
+                    value={roomId}
+                    onChange={(e) => setRoomId(e.target.value)}
+                    placeholder="ルームIDを入力"
+                  />
+                </div>
 
-              <div className="mt-4">
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-2">
                   <WifiIcon className="w-4 h-4" />
-                  <p className="text-sm">
+                  <p className="text-sm whitespace-nowrap">
                     接続状態:{" "}
                     <span
                       className={
@@ -224,13 +220,15 @@ export default function Home() {
                     </span>
                   </p>
                 </div>
+              </div>
 
+              <div className="mt-2">
                 {!showIframe ? (
-                  <div className="relative h-[400px] md:h-[500px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                  <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
                     「カメラを開始」ボタンをクリックしてカメラを起動します
                   </div>
                 ) : (
-                  <div className="relative h-[400px] md:h-[500px]">
+                  <div className="relative h-[500px] md:h-[600px]">
                     <div className="absolute top-2 right-2 z-10">
                       <Button
                         variant="outline"
