@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     <head>
       <title>WebRTC Connection</title>
       <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale: 1.0">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
       <style>
         * {
@@ -345,8 +345,8 @@ export async function GET(request: NextRequest) {
           activateFallbackMode();
         });
         
-        // 初期状態ではデバッグを非表示
-        debugPanel.style.display = 'none';
+        // 初期状態ではデバッグを表示（問題診断のため）
+        debugPanel.style.display = 'block';
         
         // ログ関数
         function log(message) {
@@ -555,6 +555,7 @@ export async function GET(request: NextRequest) {
         function monitorIceConnectionState(pc) {
           if (!pc) return;
           
+          // ICE接続状態の変化を監視
           pc.oniceconnectionstatechange = () => {
             log('ICE接続状態変更: ' + pc.iceConnectionState);
             
@@ -583,6 +584,21 @@ export async function GET(request: NextRequest) {
             } else {
               log('ICE候補収集完了');
             }
+          };
+          
+          // 追加: ICE収集状態の変化を監視
+          pc.onicegatheringstatechange = () => {
+            log('ICE収集状態変更: ' + pc.iceGatheringState);
+          };
+          
+          // 追加: 接続状態の変化を監視
+          pc.onconnectionstatechange = () => {
+            log('接続状態変更: ' + pc.connectionState);
+          };
+          
+          // 追加: シグナリング状態の変化を監視
+          pc.onsignalingstatechange = () => {
+            log('シグナリング状態変更: ' + pc.signalingState);
           };
           
           // 接続統計情報の定期的な収集
@@ -618,20 +634,32 @@ export async function GET(request: NextRequest) {
           
           log('PeerJS初期化: ' + peerId);
           
-          // PeerJSの設定 - シンプルな設定に修正
+          // PeerJSの設定 - TURNサーバーを追加
           const peerConfig = {
             debug: 3,
             config: {
               'iceServers': [
+                // STUNサーバー
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
                 { urls: 'stun:stun3.l.google.com:19302' },
                 { urls: 'stun:stun4.l.google.com:19302' },
                 { urls: 'stun:stun.stunprotocol.org:3478' },
-                // 無料のTURNサーバーを追加（実際の環境では自前のTURNサーバーを使用することを推奨）
+                
+                // TURNサーバー（無料のOpenRelayプロジェクト）
                 {
                   urls: 'turn:openrelay.metered.ca:80',
+                  username: 'openrelayproject',
+                  credential: 'openrelayproject'
+                },
+                {
+                  urls: 'turn:openrelay.metered.ca:443',
+                  username: 'openrelayproject',
+                  credential: 'openrelayproject'
+                },
+                {
+                  urls: 'turn:openrelay.metered.ca:443?transport=tcp',
                   username: 'openrelayproject',
                   credential: 'openrelayproject'
                 }
@@ -788,7 +816,7 @@ export async function GET(request: NextRequest) {
               // 代替接続モードを自動的に有効化
               activateFallbackMode();
             }
-          }, 10000);
+          }, 15000);
           
           try {
             // データ接続
@@ -812,7 +840,15 @@ export async function GET(request: NextRequest) {
                   metadata: { type: 'video-call' },
                   sdpTransform: (sdp) => {
                     // SDP設定を最適化（低遅延優先）
-                    return sdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; maxaveragebitrate=128000');
+                    let modifiedSdp = sdp;
+                    
+                    // ビデオコーデックの優先順位を調整
+                    modifiedSdp = modifiedSdp.replace('m=video', 'm=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 102 121 127 120 125 107 108 109 124 119 123 118 114 115 116');
+                    
+                    // 低遅延設定を追加
+                    modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; maxaveragebitrate=128000');
+                    
+                    return modifiedSdp;
                   }
                 };
                 const call = peer.call(targetId, new MediaStream(), callOptions);
@@ -821,11 +857,6 @@ export async function GET(request: NextRequest) {
                 
                 // ICE接続状態の監視
                 if (call.peerConnection) {
-                  // 接続設定を最適化
-                  call.peerConnection.onconnectionstatechange = () => {
-                    log('接続状態変更: ' + call.peerConnection.connectionState);
-                  };
-                  
                   monitorIceConnectionState(call.peerConnection);
                 }
                 
@@ -947,7 +978,7 @@ export async function GET(request: NextRequest) {
           // 代替接続モードのUIを表示
           if (mode === 'viewer') {
             // 視聴モードの場合、カメラモード用のQRコードを表示
-            const fallbackUrl = \`https://remote-gamma.vercel.app/?room=\${roomId}&mode=camera&fallback=true\`;
+            const fallbackUrl = \`${process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : window.location.origin}/?room=\${roomId}&mode=camera&fallback=true\`;
             
             // QRコードライブラリを動的に読み込み
             const script = document.createElement('script');
@@ -1015,6 +1046,46 @@ export async function GET(request: NextRequest) {
               }
             }, 400); // 0.4秒ごとに送信（さらに更新頻度を上げる）
           }
+        }
+        
+        // ブラウザの互換性チェック
+        function checkBrowserCompatibility() {
+          const browser = {
+            name: '',
+            version: '',
+            isCompatible: true,
+            issues: []
+          };
+          
+          const ua = navigator.userAgent;
+          
+          if (ua.includes('Safari') && !ua.includes('Chrome') && !ua.includes('Firefox')) {
+            browser.name = 'Safari';
+            // Safariバージョンの抽出
+            const versionMatch = ua.match(/Version\\/(\\d+\\.\\d+)/);
+            browser.version = versionMatch ? versionMatch[1] : 'unknown';
+            
+            if (parseFloat(browser.version) < 13) {
+              browser.isCompatible = false;
+              browser.issues.push('Safari 13未満はWebRTCの完全サポートがありません');
+            }
+          }
+          
+          // iOSの検出
+          if (/iPad|iPhone|iPod/.test(ua)) {
+            browser.name += ' on iOS';
+            browser.issues.push('iOS端末ではWebRTCに制限があります');
+          }
+          
+          log('ブラウザ互換性: ' + JSON.stringify(browser));
+          return browser;
+        }
+        
+        // ブラウザ互換性チェックを実行
+        const browserCompat = checkBrowserCompatibility();
+        if (!browserCompat.isCompatible) {
+          log('警告: このブラウザはWebRTCとの完全な互換性がありません');
+          updateStatus('警告: ブラウザの互換性に問題があります - ' + browserCompat.issues.join(', '));
         }
         
         // カメラモードの場合はカメラを起動
