@@ -16,40 +16,56 @@ export class PeopleCounter {
     private canvasWidth = 0
     private canvasHeight = 0
     private analysisCanvas: HTMLCanvasElement | null = null // 分析表示用のキャンバス
+    private modelLoadPromise: Promise<any> | null = null // モデル読み込みのPromise
   
     constructor() {
       // クリーンアップタイマーの設定
       setInterval(() => this.cleanupTrackedPeople(), this.cleanupInterval)
+  
+      // 初期化時にモデルの読み込みを開始
+      this.loadModel()
     }
   
     // モデルの読み込み
     async loadModel() {
       if (this.model) {
         console.log("モデルは既に読み込まれています")
-        return
+        return this.model
       }
   
-      if (this.isModelLoading) {
+      if (this.modelLoadPromise) {
         console.log("モデルを読み込み中です...")
-        return
+        return this.modelLoadPromise
       }
   
+      console.log("モデルの読み込みを開始します")
       this.isModelLoading = true
-      try {
-        // グローバルオブジェクトからCOCO-SSDモデルを取得
-        if (typeof window !== "undefined" && (window as any).cocoSsd) {
-          console.log("COCO-SSDモデルを読み込みます...")
-          this.model = await (window as any).cocoSsd.load()
-          console.log("人物検出モデルを読み込みました")
-        } else {
-          console.error("COCO-SSDモデルが見つかりません")
-          console.log("window.cocoSsd:", typeof window !== "undefined" ? (window as any).cocoSsd : "undefined")
+  
+      // モデル読み込みのPromiseを作成
+      this.modelLoadPromise = new Promise(async (resolve, reject) => {
+        try {
+          // グローバルオブジェクトからCOCO-SSDモデルを取得
+          if (typeof window !== "undefined" && (window as any).cocoSsd) {
+            console.log("COCO-SSDモデルを読み込みます...")
+            const loadedModel = await (window as any).cocoSsd.load()
+            console.log("人物検出モデルを読み込みました")
+            this.model = loadedModel
+            this.isModelLoading = false
+            resolve(loadedModel)
+          } else {
+            console.error("COCO-SSDモデルが見つかりません")
+            console.log("window.cocoSsd:", typeof window !== "undefined" ? (window as any).cocoSsd : "undefined")
+            this.isModelLoading = false
+            reject(new Error("COCO-SSDモデルが見つかりません"))
+          }
+        } catch (error) {
+          console.error("モデル読み込みエラー:", error)
+          this.isModelLoading = false
+          reject(error)
         }
-      } catch (error) {
-        console.error("モデル読み込みエラー:", error)
-      } finally {
-        this.isModelLoading = false
-      }
+      })
+  
+      return this.modelLoadPromise
     }
   
     // 横断ラインの設定
@@ -71,23 +87,30 @@ export class PeopleCounter {
     // 分析キャンバスの設定
     setAnalysisCanvas(canvas: HTMLCanvasElement | null) {
       this.analysisCanvas = canvas
+      console.log("分析キャンバスを設定しました:", canvas ? `${canvas.width}x${canvas.height}` : "null")
     }
   
     // 人物検出の実行
     async detectPeople(imageElement: HTMLImageElement | HTMLVideoElement, canvas: HTMLCanvasElement) {
-      if (!this.model) {
-        await this.loadModel()
+      try {
+        // モデルが読み込まれていない場合は読み込む
         if (!this.model) {
-          console.error("モデルが読み込まれていません")
+          console.log("モデルが読み込まれていないため、読み込みを開始します")
+          try {
+            this.model = await this.loadModel()
+          } catch (error) {
+            console.error("モデル読み込みに失敗しました:", error)
+            return
+          }
+        }
+  
+        const now = Date.now()
+        if (now - this.lastDetectionTime < this.detectionInterval) {
+          // 検出間隔が短すぎる場合はスキップ
           return
         }
-      }
+        this.lastDetectionTime = now
   
-      const now = Date.now()
-      if (now - this.lastDetectionTime < this.detectionInterval) return
-      this.lastDetectionTime = now
-  
-      try {
         // 画像が読み込まれているか確認
         if (imageElement instanceof HTMLImageElement && !imageElement.complete) {
           console.log("画像がまだ読み込まれていません")
@@ -109,8 +132,8 @@ export class PeopleCounter {
   
         if (imageElement instanceof HTMLImageElement) {
           // 画像要素の場合
-          imgWidth = imageElement.width || imageElement.clientWidth || 640
-          imgHeight = imageElement.height || imageElement.clientHeight || 480
+          imgWidth = imageElement.naturalWidth || imageElement.width || 640
+          imgHeight = imageElement.naturalHeight || imageElement.height || 480
           console.log(`画像サイズ: ${imgWidth}x${imgHeight}`)
   
           // 画像が正しく読み込まれているか確認
@@ -141,6 +164,7 @@ export class PeopleCounter {
         console.log("キャンバスに画像を描画しました")
   
         // 人物検出の実行
+        console.log("モデルによる検出を実行します")
         const predictions = await this.model.detect(imageElement)
         console.log(`検出結果: ${predictions.length}個のオブジェクトを検出`)
   

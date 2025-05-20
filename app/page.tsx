@@ -22,6 +22,8 @@ export default function Home() {
   const [debugMode, setDebugMode] = useState(false)
   const [showPeopleCounter, setShowPeopleCounter] = useState(false)
   const [scriptsLoaded, setScriptsLoaded] = useState(false) // スクリプト読み込み状態
+  const [isLoadingScripts, setIsLoadingScripts] = useState(false) // スクリプト読み込み中フラグ
+  const [imageReceived, setImageReceived] = useState(false) // 画像受信フラグ
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const analysisCanvasRef = useRef<HTMLCanvasElement>(null) // 分析表示用のキャンバス
@@ -65,26 +67,22 @@ export default function Home() {
   // TensorFlow.jsとCOCO-SSDモデルのスクリプトを読み込む
   const loadScripts = () => {
     // すでに読み込まれている場合は何もしない
-    if (scriptsLoaded) {
-      console.log("スクリプトは既に読み込まれています")
+    if (scriptsLoaded || isLoadingScripts) {
+      console.log("スクリプトは既に読み込まれているか読み込み中です")
       return
     }
 
     console.log("スクリプトの読み込みを開始します...")
+    setIsLoadingScripts(true)
 
     // グローバルオブジェクトにスクリプト読み込み状態を追跡するプロパティを追加
     if (typeof window !== "undefined") {
-      ;(window as any).tfLoaded = false
-      ;(window as any).cocoSsdLoaded = false
-
       // TensorFlow.jsの読み込み
       const tfScript = document.createElement("script")
       tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"
       tfScript.async = true
       tfScript.onload = () => {
         console.log("TensorFlow.js読み込み完了")
-        ;(window as any).tfLoaded = true
-        checkScriptsLoaded()
 
         // TensorFlow.jsの読み込み完了後にCOCO-SSDを読み込む
         const cocoSsdScript = document.createElement("script")
@@ -92,36 +90,45 @@ export default function Home() {
         cocoSsdScript.async = true
         cocoSsdScript.onload = () => {
           console.log("COCO-SSDモデル読み込み完了")
-          ;(window as any).cocoSsdLoaded = true
-          checkScriptsLoaded()
+          setScriptsLoaded(true)
+          setIsLoadingScripts(false)
+
+          // スクリプト読み込み完了後に人物カウンターを初期化
+          setTimeout(() => {
+            initPeopleCounter()
+          }, 500)
         }
         cocoSsdScript.onerror = (e) => {
           console.error("COCO-SSDモデル読み込みエラー:", e)
+          setIsLoadingScripts(false)
         }
         document.head.appendChild(cocoSsdScript)
       }
       tfScript.onerror = (e) => {
         console.error("TensorFlow.js読み込みエラー:", e)
+        setIsLoadingScripts(false)
       }
       document.head.appendChild(tfScript)
     }
   }
 
-  // スクリプトの読み込み状態をチェック
-  const checkScriptsLoaded = () => {
-    if (typeof window !== "undefined" && (window as any).tfLoaded && (window as any).cocoSsdLoaded) {
-      console.log("すべてのスクリプトが読み込まれました")
-      setScriptsLoaded(true)
-      initPeopleCounter()
-    }
-  }
-
   // 人物カウント機能が有効になったらスクリプトを読み込む
   useEffect(() => {
-    if (showPeopleCounter && !scriptsLoaded) {
+    if (showPeopleCounter && !scriptsLoaded && !isLoadingScripts) {
       loadScripts()
+    } else if (showPeopleCounter && scriptsLoaded && !peopleCounterRef.current) {
+      // スクリプトは読み込まれているが、人物カウンターがまだ初期化されていない場合
+      initPeopleCounter()
     }
-  }, [showPeopleCounter, scriptsLoaded])
+  }, [showPeopleCounter, scriptsLoaded, isLoadingScripts])
+
+  // スクリプトが読み込まれたら人物カウンターを初期化
+  useEffect(() => {
+    if (scriptsLoaded && showPeopleCounter && !peopleCounterRef.current) {
+      console.log("スクリプト読み込み完了後の人物カウンター初期化")
+      initPeopleCounter()
+    }
+  }, [scriptsLoaded, showPeopleCounter])
 
   // 人物カウンターの初期化
   const initPeopleCounter = () => {
@@ -133,6 +140,13 @@ export default function Home() {
 
     if (!peopleCounterRef.current && scriptsLoaded) {
       console.log("人物カウンターを初期化しています...")
+
+      // グローバルオブジェクトのcocoSsdが存在するか確認
+      if (typeof window !== "undefined" && !(window as any).cocoSsd) {
+        console.error("COCO-SSDモデルがグローバルオブジェクトに見つかりません")
+        return
+      }
+
       peopleCounterRef.current = new PeopleCounter()
       peopleCounterRef.current.setCountUpdateCallback((count) => {
         console.log("カウント更新:", count)
@@ -151,6 +165,16 @@ export default function Home() {
       updateCrossingLine()
 
       console.log("人物カウンター初期化完了")
+
+      // 既に画像が受信されている場合は、人物検出を実行
+      if (imageReceived && remoteImageRef.current && analysisCanvasRef.current) {
+        console.log("初期化後に既存の画像で人物検出を実行します")
+        setTimeout(() => {
+          if (peopleCounterRef.current && remoteImageRef.current && analysisCanvasRef.current) {
+            peopleCounterRef.current.detectPeople(remoteImageRef.current, analysisCanvasRef.current)
+          }
+        }, 500)
+      }
     } else if (peopleCounterRef.current) {
       console.log("人物カウンターは既に初期化されています")
     } else {
@@ -160,12 +184,21 @@ export default function Home() {
 
   // 横断ラインの更新
   const updateCrossingLine = () => {
-    if (!peopleCounterRef.current || !containerRef.current) return
+    if (!peopleCounterRef.current) {
+      console.warn("人物カウンターが初期化されていないため、横断ラインを設定できません")
+      return
+    }
 
-    // コンテナの寸法を取得
-    const containerRect = containerRef.current.getBoundingClientRect()
-    const width = containerRect.width
-    const height = containerRect.height
+    if (!analysisCanvasRef.current) {
+      console.warn("分析キャンバスが見つからないため、横断ラインを設定できません")
+      return
+    }
+
+    // キャンバスの寸法を取得
+    const width = analysisCanvasRef.current.width
+    const height = analysisCanvasRef.current.height
+
+    console.log(`横断ラインを設定: キャンバスサイズ=${width}x${height}`)
 
     // 画面の中央に横断ラインを設定（左から右へ）
     peopleCounterRef.current.setCrossingLine(
@@ -176,25 +209,21 @@ export default function Home() {
     )
   }
 
-  // ウィンドウサイズ変更時に横断ラインを更新
-  useEffect(() => {
-    if (!showPeopleCounter) return
-
-    const handleResize = () => {
-      updateCrossingLine()
-    }
-
-    window.addEventListener("resize", handleResize)
-    return () => {
-      window.removeEventListener("resize", handleResize)
-    }
-  }, [showPeopleCounter])
-
   // 画像の読み込み完了ハンドラ
   const handleImageLoad = () => {
     console.log("画像が読み込まれました")
+    setImageReceived(true)
+
     if (showPeopleCounter && peopleCounterRef.current && analysisCanvasRef.current && scriptsLoaded) {
+      console.log("画像読み込み完了 - 人物検出を実行します")
       peopleCounterRef.current.detectPeople(remoteImageRef.current!, analysisCanvasRef.current)
+    } else {
+      console.log("画像は読み込まれましたが、人物検出の条件が揃っていません:", {
+        showPeopleCounter,
+        peopleCounter: !!peopleCounterRef.current,
+        analysisCanvas: !!analysisCanvasRef.current,
+        scriptsLoaded,
+      })
     }
   }
 
@@ -210,14 +239,24 @@ export default function Home() {
       if (event.data && event.data.type === "image-data" && remoteImageRef.current) {
         // 画像データを設定
         remoteImageRef.current.src = event.data.data
+        setImageReceived(true)
 
         // 画像が読み込まれたら人物検出を実行（onLoadイベントでも実行されるが、念のため直接も呼び出す）
         if (showPeopleCounter && peopleCounterRef.current && analysisCanvasRef.current && scriptsLoaded) {
           console.log("画像データを受信しました - 人物検出を実行します")
           // 少し遅延を入れて画像の読み込みを待つ
           setTimeout(() => {
-            peopleCounterRef.current!.detectPeople(remoteImageRef.current!, analysisCanvasRef.current!)
-          }, 50)
+            if (peopleCounterRef.current && remoteImageRef.current && analysisCanvasRef.current) {
+              peopleCounterRef.current.detectPeople(remoteImageRef.current, analysisCanvasRef.current)
+            }
+          }, 100)
+        } else {
+          console.log("画像データを受信しましたが、人物検出の条件が揃っていません:", {
+            showPeopleCounter,
+            peopleCounter: !!peopleCounterRef.current,
+            analysisCanvas: !!analysisCanvasRef.current,
+            scriptsLoaded,
+          })
         }
       }
     }
@@ -267,9 +306,9 @@ export default function Home() {
     // 有効にする場合は、スクリプトの読み込みと初期化を確認
     if (newState) {
       console.log("人物カウント機能を有効にします")
-      if (!scriptsLoaded) {
+      if (!scriptsLoaded && !isLoadingScripts) {
         loadScripts()
-      } else if (!peopleCounterRef.current) {
+      } else if (scriptsLoaded && !peopleCounterRef.current) {
         initPeopleCounter()
       }
     } else {
@@ -432,9 +471,18 @@ export default function Home() {
               </div>
 
               {/* スクリプト読み込み状態 */}
-              {showPeopleCounter && !scriptsLoaded && (
+              {showPeopleCounter && isLoadingScripts && (
                 <div className="mt-2 text-center text-sm text-amber-500">
                   人物検出モデルを読み込み中... しばらくお待ちください。
+                </div>
+              )}
+
+              {/* デバッグ情報 */}
+              {showPeopleCounter && (
+                <div className="mt-2 text-xs text-gray-500">
+                  <p>スクリプト読み込み: {scriptsLoaded ? "完了" : isLoadingScripts ? "読み込み中" : "未読み込み"}</p>
+                  <p>人物カウンター: {peopleCounterRef.current ? "初期化済み" : "未初期化"}</p>
+                  <p>画像受信: {imageReceived ? "受信済み" : "未受信"}</p>
                 </div>
               )}
 
