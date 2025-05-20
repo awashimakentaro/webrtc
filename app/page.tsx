@@ -65,7 +65,12 @@ export default function Home() {
   // TensorFlow.jsとCOCO-SSDモデルのスクリプトを読み込む
   const loadScripts = () => {
     // すでに読み込まれている場合は何もしない
-    if (scriptsLoaded) return
+    if (scriptsLoaded) {
+      console.log("スクリプトは既に読み込まれています")
+      return
+    }
+
+    console.log("スクリプトの読み込みを開始します...")
 
     // グローバルオブジェクトにスクリプト読み込み状態を追跡するプロパティを追加
     if (typeof window !== "undefined") {
@@ -90,7 +95,13 @@ export default function Home() {
           ;(window as any).cocoSsdLoaded = true
           checkScriptsLoaded()
         }
+        cocoSsdScript.onerror = (e) => {
+          console.error("COCO-SSDモデル読み込みエラー:", e)
+        }
         document.head.appendChild(cocoSsdScript)
+      }
+      tfScript.onerror = (e) => {
+        console.error("TensorFlow.js読み込みエラー:", e)
       }
       document.head.appendChild(tfScript)
     }
@@ -114,6 +125,12 @@ export default function Home() {
 
   // 人物カウンターの初期化
   const initPeopleCounter = () => {
+    console.log("人物カウンター初期化開始:", {
+      current: peopleCounterRef.current,
+      scriptsLoaded,
+      analysisCanvas: analysisCanvasRef.current,
+    })
+
     if (!peopleCounterRef.current && scriptsLoaded) {
       console.log("人物カウンターを初期化しています...")
       peopleCounterRef.current = new PeopleCounter()
@@ -122,12 +139,22 @@ export default function Home() {
         setPeopleCount(count)
       })
       peopleCounterRef.current.setDebugMode(true) // 常にデバッグモードを有効に
-      peopleCounterRef.current.setAnalysisCanvas(analysisCanvasRef.current) // 分析キャンバスを設定
+
+      if (analysisCanvasRef.current) {
+        console.log("分析キャンバスを設定します")
+        peopleCounterRef.current.setAnalysisCanvas(analysisCanvasRef.current)
+      } else {
+        console.warn("分析キャンバスが見つかりません")
+      }
 
       // 横断ラインを設定
       updateCrossingLine()
 
       console.log("人物カウンター初期化完了")
+    } else if (peopleCounterRef.current) {
+      console.log("人物カウンターは既に初期化されています")
+    } else {
+      console.warn("スクリプトが読み込まれていないため、人物カウンターを初期化できません")
     }
   }
 
@@ -163,6 +190,14 @@ export default function Home() {
     }
   }, [showPeopleCounter])
 
+  // 画像の読み込み完了ハンドラ
+  const handleImageLoad = () => {
+    console.log("画像が読み込まれました")
+    if (showPeopleCounter && peopleCounterRef.current && analysisCanvasRef.current && scriptsLoaded) {
+      peopleCounterRef.current.detectPeople(remoteImageRef.current!, analysisCanvasRef.current)
+    }
+  }
+
   // メッセージイベントリスナー
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -176,10 +211,13 @@ export default function Home() {
         // 画像データを設定
         remoteImageRef.current.src = event.data.data
 
-        // 画像が読み込まれたら人物検出を実行
+        // 画像が読み込まれたら人物検出を実行（onLoadイベントでも実行されるが、念のため直接も呼び出す）
         if (showPeopleCounter && peopleCounterRef.current && analysisCanvasRef.current && scriptsLoaded) {
           console.log("画像データを受信しました - 人物検出を実行します")
-          peopleCounterRef.current.detectPeople(remoteImageRef.current, analysisCanvasRef.current)
+          // 少し遅延を入れて画像の読み込みを待つ
+          setTimeout(() => {
+            peopleCounterRef.current!.detectPeople(remoteImageRef.current!, analysisCanvasRef.current!)
+          }, 50)
         }
       }
     }
@@ -223,7 +261,20 @@ export default function Home() {
 
   // 人物カウント機能の切り替え
   const togglePeopleCounter = () => {
-    setShowPeopleCounter(!showPeopleCounter)
+    const newState = !showPeopleCounter
+    setShowPeopleCounter(newState)
+
+    // 有効にする場合は、スクリプトの読み込みと初期化を確認
+    if (newState) {
+      console.log("人物カウント機能を有効にします")
+      if (!scriptsLoaded) {
+        loadScripts()
+      } else if (!peopleCounterRef.current) {
+        initPeopleCounter()
+      }
+    } else {
+      console.log("人物カウント機能を無効にします")
+    }
   }
 
   return (
@@ -331,6 +382,7 @@ export default function Home() {
                           crossOrigin="anonymous"
                           width={640}
                           height={480}
+                          onLoad={handleImageLoad}
                         />
                       )}
 
@@ -356,7 +408,13 @@ export default function Home() {
                       人物カウント機能を有効にすると分析映像が表示されます
                     </div>
                   ) : (
-                    <canvas ref={analysisCanvasRef} className="w-full h-full" width={640} height={480} />
+                    <canvas
+                      ref={analysisCanvasRef}
+                      className="w-full h-full object-contain"
+                      width={640}
+                      height={480}
+                      style={{ background: "#000" }}
+                    />
                   )}
                 </div>
               </div>

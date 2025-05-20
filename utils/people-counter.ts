@@ -24,7 +24,15 @@ export class PeopleCounter {
   
     // モデルの読み込み
     async loadModel() {
-      if (this.model || this.isModelLoading) return
+      if (this.model) {
+        console.log("モデルは既に読み込まれています")
+        return
+      }
+  
+      if (this.isModelLoading) {
+        console.log("モデルを読み込み中です...")
+        return
+      }
   
       this.isModelLoading = true
       try {
@@ -35,6 +43,7 @@ export class PeopleCounter {
           console.log("人物検出モデルを読み込みました")
         } else {
           console.error("COCO-SSDモデルが見つかりません")
+          console.log("window.cocoSsd:", typeof window !== "undefined" ? (window as any).cocoSsd : "undefined")
         }
       } catch (error) {
         console.error("モデル読み込みエラー:", error)
@@ -103,6 +112,13 @@ export class PeopleCounter {
           imgWidth = imageElement.width || imageElement.clientWidth || 640
           imgHeight = imageElement.height || imageElement.clientHeight || 480
           console.log(`画像サイズ: ${imgWidth}x${imgHeight}`)
+  
+          // 画像が正しく読み込まれているか確認
+          if (imgWidth === 0 || imgHeight === 0) {
+            console.error("画像のサイズが取得できません")
+            console.log("画像の状態:", imageElement.complete, imageElement.naturalWidth, imageElement.naturalHeight)
+            return
+          }
         } else {
           // ビデオ要素の場合
           imgWidth = imageElement.videoWidth || imageElement.clientWidth || 640
@@ -122,6 +138,7 @@ export class PeopleCounter {
   
         // 分析キャンバスに元の画像を描画
         ctx.drawImage(imageElement, 0, 0, imgWidth, imgHeight)
+        console.log("キャンバスに画像を描画しました")
   
         // 人物検出の実行
         const predictions = await this.model.detect(imageElement)
@@ -132,6 +149,19 @@ export class PeopleCounter {
   
         // 横断ラインを描画
         this.drawCrossingLine(ctx)
+  
+        // デバッグ用に検出状態を表示
+        if (this.debugMode) {
+          ctx.fillStyle = "rgba(255, 255, 255, 0.7)"
+          ctx.fillRect(0, 0, 200, 20)
+          ctx.fillStyle = "black"
+          ctx.font = "12px Arial"
+          ctx.fillText(
+            `検出: ${predictions.length}個, 人物: ${predictions.filter((p) => p.class === "person").length}人`,
+            5,
+            15,
+          )
+        }
       } catch (error) {
         console.error("検出エラー:", error)
       }
