@@ -10,7 +10,6 @@ import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon, XIcon, Settings2Icon }
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import PeopleCounterDisplay from "@/components/people-counter-display"
 import { PeopleCounter } from "@/utils/people-counter"
-import Script from "next/script"
 
 export default function Home() {
   const [roomId, setRoomId] = useState("")
@@ -24,8 +23,7 @@ export default function Home() {
   const [showPeopleCounter, setShowPeopleCounter] = useState(false)
   const [tfReady, setTfReady] = useState(false)
   const [modelReady, setModelReady] = useState(false)
-  const [imageLoaded, setImageLoaded] = useState(false)
-  const [showAnalysisView, setShowAnalysisView] = useState(true) // 分析ビューの表示状態
+  const [scriptsLoaded, setScriptsLoaded] = useState(false) // スクリプト読み込み状態
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -69,10 +67,11 @@ export default function Home() {
 
   // TensorFlow.jsとCOCO-SSDモデルの読み込み状態を監視
   useEffect(() => {
-    if (tfReady && modelReady && showPeopleCounter) {
+    if (scriptsLoaded && showPeopleCounter) {
+      console.log("スクリプトが読み込まれました。人物カウンターを初期化します。")
       initPeopleCounter()
     }
-  }, [tfReady, modelReady, showPeopleCounter])
+  }, [scriptsLoaded, showPeopleCounter])
 
   // 人物カウンターの初期化
   const initPeopleCounter = () => {
@@ -185,43 +184,62 @@ export default function Home() {
 
   // 人物カウント機能の切り替え
   const togglePeopleCounter = () => {
-    if (!showPeopleCounter && !tfReady) {
-      // 人物カウントを初めて有効にする場合、スクリプトを読み込む
-      setShowPeopleCounter(true)
-    } else {
-      setShowPeopleCounter(!showPeopleCounter)
+    setShowPeopleCounter(!showPeopleCounter)
+  }
+
+  // TensorFlow.jsとCOCO-SSDモデルのスクリプトを読み込む
+  const loadScripts = () => {
+    // すでに読み込まれている場合は何もしない
+    if (scriptsLoaded) return
+
+    // グローバルオブジェクトにスクリプト読み込み状態を追跡するプロパティを追加
+    if (typeof window !== "undefined") {
+      ;(window as any).tfLoaded = false
+      ;(window as any).cocoSsdLoaded = false
+
+      // TensorFlow.jsの読み込み
+      const tfScript = document.createElement("script")
+      tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"
+      tfScript.async = false
+      tfScript.onload = () => {
+        console.log("TensorFlow.js読み込み完了")
+        ;(window as any).tfLoaded = true
+        checkScriptsLoaded()
+      }
+      document.head.appendChild(tfScript)
+
+      // TensorFlow.jsの読み込み完了後にCOCO-SSDを読み込む
+      tfScript.addEventListener("load", () => {
+        const cocoSsdScript = document.createElement("script")
+        cocoSsdScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"
+        cocoSsdScript.async = false
+        cocoSsdScript.onload = () => {
+          console.log("COCO-SSDモデル読み込み完了")
+          ;(window as any).cocoSsdLoaded = true
+          checkScriptsLoaded()
+        }
+        document.head.appendChild(cocoSsdScript)
+      })
     }
   }
 
-  // 分析ビューの切り替え
-  const toggleAnalysisView = () => {
-    setShowAnalysisView(!showAnalysisView)
+  // スクリプトの読み込み状態をチェック
+  const checkScriptsLoaded = () => {
+    if (typeof window !== "undefined" && (window as any).tfLoaded && (window as any).cocoSsdLoaded) {
+      console.log("すべてのスクリプトが読み込まれました")
+      setScriptsLoaded(true)
+    }
   }
+
+  // 人物カウント機能が有効になったらスクリプトを読み込む
+  useEffect(() => {
+    if (showPeopleCounter && !scriptsLoaded) {
+      loadScripts()
+    }
+  }, [showPeopleCounter, scriptsLoaded])
 
   return (
     <div className="container flex items-center justify-center min-h-screen py-4">
-      {/* TensorFlow.jsとCOCO-SSDモデルのスクリプト読み込み */}
-      {showPeopleCounter && (
-        <>
-          <Script
-            src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"
-            strategy="afterInteractive"
-            onLoad={() => {
-              console.log("TensorFlow.js読み込み完了")
-              setTfReady(true)
-            }}
-          />
-          <Script
-            src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"
-            strategy="afterInteractive"
-            onLoad={() => {
-              console.log("COCO-SSDモデル読み込み完了")
-              setModelReady(true)
-            }}
-          />
-        </>
-      )}
-
       <Card className="w-full max-w-4xl">
         <CardHeader className="pb-2">
           <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
@@ -295,65 +313,78 @@ export default function Home() {
                 )}
               </div>
 
-              <div className="mt-2">
-                {!showIframe ? (
-                  <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
-                    カメラが接続されるとここに映像が表示されます
-                  </div>
-                ) : (
-                  <div ref={containerRef} className="relative h-[400px] md:h-[400px]">
-                    <div className="absolute top-2 right-2 z-10">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-6 w-6 rounded-full bg-white"
-                        onClick={() => setShowIframe(false)}
-                      >
-                        <XIcon className="h-3 w-3" />
-                      </Button>
+              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* メインの映像表示エリア */}
+                <div>
+                  {!showIframe ? (
+                    <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                      カメラが接続されるとここに映像が表示されます
                     </div>
+                  ) : (
+                    <div ref={containerRef} className="relative h-[500px] md:h-[600px]">
+                      <div className="absolute top-2 right-2 z-10">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-6 w-6 rounded-full bg-white"
+                          onClick={() => setShowIframe(false)}
+                        >
+                          <XIcon className="h-3 w-3" />
+                        </Button>
+                      </div>
 
-                    {/* 人物検出用のキャンバス（透明なオーバーレイ） */}
-                    {showPeopleCounter && (
-                      <canvas
-                        ref={canvasRef}
-                        className="absolute top-0 left-0 w-full h-full z-20 pointer-events-none"
+                      {/* 人物検出用のキャンバス（透明なオーバーレイ） */}
+                      {showPeopleCounter && (
+                        <canvas
+                          ref={canvasRef}
+                          className="absolute top-0 left-0 w-full h-full z-20 pointer-events-none"
+                        />
+                      )}
+
+                      {/* 人物検出用の非表示画像要素 */}
+                      {showPeopleCounter && (
+                        <img
+                          ref={remoteImageRef}
+                          id="remote-image-for-detection"
+                          className="hidden"
+                          alt="カメラ映像"
+                          crossOrigin="anonymous"
+                          width={640}
+                          height={480}
+                          onLoad={() => {
+                            console.log("画像が読み込まれました")
+                            if (peopleCounterRef.current && canvasRef.current) {
+                              peopleCounterRef.current.detectPeople(remoteImageRef.current!, canvasRef.current)
+                            }
+                          }}
+                        />
+                      )}
+
+                      {/* 常に表示するiframe */}
+                      <iframe
+                        ref={iframeRef}
+                        src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
+                        className="w-full h-full rounded-md border-0"
+                        allow="camera;microphone"
+                        title="リモートカメラ"
                       />
-                    )}
-
-                    {/* 人物検出用の非表示画像要素 */}
-                    {showPeopleCounter && (
-                      <img
-                        ref={remoteImageRef}
-                        id="remote-image-for-detection"
-                        className="hidden"
-                        alt="カメラ映像"
-                        crossOrigin="anonymous"
-                        width={640}
-                        height={480}
-                      />
-                    )}
-
-                    {/* 常に表示するiframe */}
-                    <iframe
-                      ref={iframeRef}
-                      src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
-                      className="w-full h-full rounded-md border-0"
-                      allow="camera;microphone"
-                      title="リモートカメラ"
-                    />
-                  </div>
-                )}
-
-                {/* 分析映像表示エリア */}
-                {showIframe && showPeopleCounter && showAnalysisView && (
-                  <div className="mt-4 relative h-[200px] md:h-[200px] bg-black rounded-md overflow-hidden">
-                    <div className="absolute top-2 left-2 z-10">
-                      <span className="text-xs text-white bg-black bg-opacity-50 px-2 py-1 rounded">分析映像</span>
                     </div>
+                  )}
+                </div>
+
+                {/* 分析映像表示エリア - 常に表示 */}
+                <div className="relative h-[500px] md:h-[600px] bg-black rounded-md overflow-hidden">
+                  <div className="absolute top-2 left-2 z-10">
+                    <span className="text-xs text-white bg-black bg-opacity-50 px-2 py-1 rounded">分析映像</span>
+                  </div>
+                  {!showPeopleCounter ? (
+                    <div className="w-full h-full flex items-center justify-center text-gray-400">
+                      人物カウント機能を有効にすると分析映像が表示されます
+                    </div>
+                  ) : (
                     <canvas ref={analysisCanvasRef} className="w-full h-full" width={640} height={480} />
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
 
               <div className="flex gap-2">
@@ -362,18 +393,18 @@ export default function Home() {
                 </Button>
 
                 {showIframe && (
-                  <>
-                    <Button variant={showPeopleCounter ? "default" : "outline"} onClick={togglePeopleCounter}>
-                      人物カウント {showPeopleCounter ? "オフ" : "オン"}
-                    </Button>
-                    {showPeopleCounter && (
-                      <Button variant="outline" onClick={toggleAnalysisView}>
-                        分析映像 {showAnalysisView ? "非表示" : "表示"}
-                      </Button>
-                    )}
-                  </>
+                  <Button variant={showPeopleCounter ? "default" : "outline"} onClick={togglePeopleCounter}>
+                    人物カウント {showPeopleCounter ? "オフ" : "オン"}
+                  </Button>
                 )}
               </div>
+
+              {/* スクリプト読み込み状態 */}
+              {showPeopleCounter && !scriptsLoaded && (
+                <div className="mt-2 text-center text-sm text-amber-500">
+                  人物検出モデルを読み込み中... しばらくお待ちください。
+                </div>
+              )}
 
               {/* 人物カウント表示 */}
               {showPeopleCounter && showIframe && (

@@ -30,6 +30,7 @@ export class PeopleCounter {
       try {
         // グローバルオブジェクトからCOCO-SSDモデルを取得
         if (typeof window !== "undefined" && (window as any).cocoSsd) {
+          console.log("COCO-SSDモデルを読み込みます...")
           this.model = await (window as any).cocoSsd.load()
           console.log("人物検出モデルを読み込みました")
         } else {
