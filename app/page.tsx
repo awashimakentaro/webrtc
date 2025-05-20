@@ -495,6 +495,10 @@ export default function Home() {
                     onToggleDebug={toggleDebugMode}
                     debugMode={debugMode}
                   />
+                  <div className="mt-2 text-xs text-gray-500">
+                    <p>※ 左→右: 画面左から右へ移動した人数、右→左: 画面右から左へ移動した人数</p>
+                    <p>※ 合計: 両方向の通過人数の合計</p>
+                  </div>
                 </div>
               )}
             </TabsContent>
