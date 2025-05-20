@@ -15,6 +15,7 @@ export class PeopleCounter {
     private debugMode = false
     private canvasWidth = 0
     private canvasHeight = 0
+    private analysisCanvas: HTMLCanvasElement | null = null // 分析表示用のキャンバス
   
     constructor() {
       // クリーンアップタイマーの設定
@@ -55,6 +56,11 @@ export class PeopleCounter {
     // デバッグモードの設定
     setDebugMode(enabled: boolean) {
       this.debugMode = enabled
+    }
+  
+    // 分析キャンバスの設定
+    setAnalysisCanvas(canvas: HTMLCanvasElement | null) {
+      this.analysisCanvas = canvas
     }
   
     // 人物検出の実行
@@ -113,9 +119,17 @@ export class PeopleCounter {
         // キャンバスのクリア
         ctx.clearRect(0, 0, canvas.width, canvas.height)
   
-        // デバッグモードの場合は横断ラインを描画
-        if (this.debugMode) {
-          this.drawCrossingLine(ctx)
+        // 分析キャンバスの準備
+        let analysisCtx = null
+        if (this.analysisCanvas) {
+          this.analysisCanvas.width = imgWidth
+          this.analysisCanvas.height = imgHeight
+          analysisCtx = this.analysisCanvas.getContext("2d")
+          if (analysisCtx) {
+            // 分析キャンバスに画像を描画
+            analysisCtx.clearRect(0, 0, imgWidth, imgHeight)
+            analysisCtx.drawImage(imageElement, 0, 0, imgWidth, imgHeight)
+          }
         }
   
         // 人物検出の実行
@@ -123,7 +137,13 @@ export class PeopleCounter {
         console.log(`検出結果: ${predictions.length}個のオブジェクトを検出`)
   
         // 人物の検出と追跡
-        this.trackPeople(predictions, ctx)
+        this.trackPeople(predictions, ctx, analysisCtx)
+  
+        // 横断ラインを描画
+        this.drawCrossingLine(ctx)
+        if (analysisCtx) {
+          this.drawCrossingLine(analysisCtx)
+        }
       } catch (error) {
         console.error("検出エラー:", error)
       }
@@ -150,7 +170,11 @@ export class PeopleCounter {
     }
   
     // 人物の追跡処理
-    private trackPeople(predictions: any[], ctx: CanvasRenderingContext2D) {
+    private trackPeople(
+      predictions: any[],
+      ctx: CanvasRenderingContext2D,
+      analysisCtx: CanvasRenderingContext2D | null = null,
+    ) {
       // 人物のみをフィルタリング
       const people = predictions.filter((pred) => pred.class === "person")
       console.log(`${people.length}人の人物を検出しました`)
@@ -181,7 +205,7 @@ export class PeopleCounter {
           currentIds.add(closestId)
   
           // 横断ラインとの交差チェック
-          this.checkLineCrossing(trackedPerson, centerX, centerY, lastPosition, ctx)
+          this.checkLineCrossing(trackedPerson, centerX, centerY, lastPosition, ctx, analysisCtx)
         } else {
           // 新しい人物を追加
           const newId = `person_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -196,24 +220,18 @@ export class PeopleCounter {
           console.log(`新しい人物を追跡開始: ID=${newId}, 位置=(${centerX.toFixed(0)}, ${centerY.toFixed(0)})`)
         }
   
-        // デバッグモードの場合はバウンディングボックスを描画
-        if (this.debugMode) {
-          ctx.strokeStyle = "green"
-          ctx.lineWidth = 2
-          ctx.strokeRect(x, y, width, height)
+        // バウンディングボックスを描画（メインキャンバス）
+        this.drawBoundingBox(ctx, person, centerX, centerY, this.findClosestPerson(centerX, centerY, person.bbox))
   
-          // 中心点を描画
-          ctx.fillStyle = "white"
-          ctx.fillRect(centerX - 3, centerY - 3, 6, 6)
-  
-          // 信頼度を表示
-          ctx.fillStyle = "white"
-          ctx.font = "12px Arial"
-          ctx.fillText(`${Math.round(person.score * 100)}%`, x, y - 5)
-  
-          // ID表示
-          const id = this.findClosestPerson(centerX, centerY, person.bbox) || "新規"
-          ctx.fillText(`ID: ${id.substring(0, 8)}`, x, y - 20)
+        // 分析キャンバスにもバウンディングボックスを描画
+        if (analysisCtx) {
+          this.drawBoundingBox(
+            analysisCtx,
+            person,
+            centerX,
+            centerY,
+            this.findClosestPerson(centerX, centerY, person.bbox),
+          )
         }
       }
   
@@ -221,24 +239,9 @@ export class PeopleCounter {
       for (const [id, person] of this.trackedPeople.entries()) {
         if (!currentIds.has(id)) {
           // このフレームで検出されなかった人物
-          if (this.debugMode) {
-            const [x, y, width, height] = person.box
-            const centerX = x + width / 2
-            const centerY = y + height / 2
-  
-            // 消失した人物を薄く表示
-            ctx.strokeStyle = "rgba(255, 0, 0, 0.5)"
-            ctx.lineWidth = 1
-            ctx.strokeRect(x, y, width, height)
-  
-            // 中心点を描画
-            ctx.fillStyle = "rgba(255, 0, 0, 0.5)"
-            ctx.fillRect(centerX - 3, centerY - 3, 6, 6)
-  
-            // ID表示
-            ctx.fillStyle = "rgba(255, 255, 255, 0.5)"
-            ctx.font = "12px Arial"
-            ctx.fillText(`ID: ${id.substring(0, 8)} (消失)`, x, y - 20)
+          this.drawDisappearedPerson(ctx, person)
+          if (analysisCtx) {
+            this.drawDisappearedPerson(analysisCtx, person)
           }
         }
       }
@@ -247,6 +250,65 @@ export class PeopleCounter {
       if (this.onCountUpdate) {
         this.onCountUpdate(this.peopleCount)
       }
+    }
+  
+    // バウンディングボックスの描画
+    private drawBoundingBox(
+      ctx: CanvasRenderingContext2D,
+      person: any,
+      centerX: number,
+      centerY: number,
+      id: string | null,
+    ) {
+      const [x, y, width, height] = person.bbox
+  
+      // バウンディングボックスを描画
+      ctx.strokeStyle = "green"
+      ctx.lineWidth = 2
+      ctx.strokeRect(x, y, width, height)
+  
+      // 中心点を描画
+      ctx.fillStyle = "white"
+      ctx.fillRect(centerX - 3, centerY - 3, 6, 6)
+  
+      // 信頼度を表示
+      ctx.fillStyle = "white"
+      ctx.font = "12px Arial"
+      ctx.fillText(`${Math.round(person.score * 100)}%`, x, y - 5)
+  
+      // ID表示
+      const displayId = id || "新規"
+      ctx.fillText(`ID: ${displayId.substring(0, 8)}`, x, y - 20)
+    }
+  
+    // 消失した人物の描画
+    private drawDisappearedPerson(
+      ctx: CanvasRenderingContext2D,
+      person: {
+        id: string
+        box: any
+        crossed: boolean
+        direction: string | null
+        lastPosition: { x: number; y: number }
+      },
+    ) {
+      const [x, y, width, height] = person.box
+      const centerX = x + width / 2
+      const centerY = y + height / 2
+  
+      // 消失した人物を薄く表示
+      ctx.strokeStyle = "rgba(255, 0, 0, 0.5)"
+      ctx.lineWidth = 1
+      ctx.strokeRect(x, y, width, height)
+  
+      // 中心点を描画
+      ctx.fillStyle = "rgba(255, 0, 0, 0.5)"
+      ctx.fillRect(centerX - 3, centerY - 3, 6, 6)
+  
+      // ID表示
+      ctx.fillStyle = "rgba(255, 255, 255, 0.5)"
+      ctx.font = "12px Arial"
+      ctx.fillText(`ID: ${person.id.substring(0, 8)} (消失)`, x, y - 20)
     }
   
     // 最も近い追跡中の人物を見つける
@@ -286,6 +348,7 @@ export class PeopleCounter {
       centerY: number,
       lastPosition: { x: number; y: number },
       ctx: CanvasRenderingContext2D,
+      analysisCtx: CanvasRenderingContext2D | null = null,
     ) {
       if (person.crossed) return
   
@@ -320,43 +383,68 @@ export class PeopleCounter {
           `現在のカウント: 左→右=${this.peopleCount.leftToRight}, 右→左=${this.peopleCount.rightToLeft}, 合計=${this.peopleCount.total}`,
         )
   
-        // デバッグモードの場合は軌跡を描画
-        if (this.debugMode && ctx) {
-          ctx.beginPath()
-          ctx.moveTo(lastPosition.x, lastPosition.y)
-          ctx.lineTo(centerX, centerY)
-          ctx.strokeStyle = direction === "right" ? "rgba(0, 255, 0, 0.8)" : "rgba(255, 0, 0, 0.8)"
-          ctx.lineWidth = 2
-          ctx.stroke()
-  
-          // 交差点を強調表示
-          const intersection = this.getIntersectionPoint(
-            lastPosition.x,
-            lastPosition.y,
-            centerX,
-            centerY,
-            this.crossingLine.x1,
-            this.crossingLine.y1,
-            this.crossingLine.x2,
-            this.crossingLine.y2,
-          )
-  
-          if (intersection) {
-            ctx.fillStyle = "yellow"
-            ctx.beginPath()
-            ctx.arc(intersection.x, intersection.y, 5, 0, Math.PI * 2)
-            ctx.fill()
-          }
+        // 軌跡を描画
+        this.drawTrajectory(ctx, lastPosition, centerX, centerY, direction)
+        if (analysisCtx) {
+          this.drawTrajectory(analysisCtx, lastPosition, centerX, centerY, direction)
         }
-      } else if (this.debugMode && ctx) {
-        // デバッグモードの場合は移動軌跡を描画
-        ctx.beginPath()
-        ctx.moveTo(lastPosition.x, lastPosition.y)
-        ctx.lineTo(centerX, centerY)
-        ctx.strokeStyle = "rgba(0, 255, 255, 0.5)"
-        ctx.lineWidth = 1
-        ctx.stroke()
+      } else {
+        // 移動軌跡を描画
+        this.drawMovementPath(ctx, lastPosition, centerX, centerY)
+        if (analysisCtx) {
+          this.drawMovementPath(analysisCtx, lastPosition, centerX, centerY)
+        }
       }
+    }
+  
+    // 横断時の軌跡を描画
+    private drawTrajectory(
+      ctx: CanvasRenderingContext2D,
+      lastPosition: { x: number; y: number },
+      centerX: number,
+      centerY: number,
+      direction: string,
+    ) {
+      ctx.beginPath()
+      ctx.moveTo(lastPosition.x, lastPosition.y)
+      ctx.lineTo(centerX, centerY)
+      ctx.strokeStyle = direction === "right" ? "rgba(0, 255, 0, 0.8)" : "rgba(255, 0, 0, 0.8)"
+      ctx.lineWidth = 2
+      ctx.stroke()
+  
+      // 交差点を強調表示
+      const intersection = this.getIntersectionPoint(
+        lastPosition.x,
+        lastPosition.y,
+        centerX,
+        centerY,
+        this.crossingLine.x1,
+        this.crossingLine.y1,
+        this.crossingLine.x2,
+        this.crossingLine.y2,
+      )
+  
+      if (intersection) {
+        ctx.fillStyle = "yellow"
+        ctx.beginPath()
+        ctx.arc(intersection.x, intersection.y, 5, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  
+    // 移動軌跡を描画
+    private drawMovementPath(
+      ctx: CanvasRenderingContext2D,
+      lastPosition: { x: number; y: number },
+      centerX: number,
+      centerY: number,
+    ) {
+      ctx.beginPath()
+      ctx.moveTo(lastPosition.x, lastPosition.y)
+      ctx.lineTo(centerX, centerY)
+      ctx.strokeStyle = "rgba(0, 255, 255, 0.5)"
+      ctx.lineWidth = 1
+      ctx.stroke()
     }
   
     // 2つの線分の交差判定

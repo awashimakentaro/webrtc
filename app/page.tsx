@@ -25,9 +25,11 @@ export default function Home() {
   const [tfReady, setTfReady] = useState(false)
   const [modelReady, setModelReady] = useState(false)
   const [imageLoaded, setImageLoaded] = useState(false)
+  const [showAnalysisView, setShowAnalysisView] = useState(true) // 分析ビューの表示状態
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const analysisCanvasRef = useRef<HTMLCanvasElement>(null) // 分析表示用のキャンバス
   const peopleCounterRef = useRef<PeopleCounter | null>(null)
   const remoteImageRef = useRef<HTMLImageElement | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -81,7 +83,8 @@ export default function Home() {
         console.log("カウント更新:", count)
         setPeopleCount(count)
       })
-      peopleCounterRef.current.setDebugMode(debugMode)
+      peopleCounterRef.current.setDebugMode(true) // 常にデバッグモードを有効に
+      peopleCounterRef.current.setAnalysisCanvas(analysisCanvasRef.current) // 分析キャンバスを設定
 
       // 横断ラインを設定
       updateCrossingLine()
@@ -190,6 +193,11 @@ export default function Home() {
     }
   }
 
+  // 分析ビューの切り替え
+  const toggleAnalysisView = () => {
+    setShowAnalysisView(!showAnalysisView)
+  }
+
   return (
     <div className="container flex items-center justify-center min-h-screen py-4">
       {/* TensorFlow.jsとCOCO-SSDモデルのスクリプト読み込み */}
@@ -293,7 +301,7 @@ export default function Home() {
                     カメラが接続されるとここに映像が表示されます
                   </div>
                 ) : (
-                  <div ref={containerRef} className="relative h-[500px] md:h-[600px]">
+                  <div ref={containerRef} className="relative h-[400px] md:h-[400px]">
                     <div className="absolute top-2 right-2 z-10">
                       <Button
                         variant="outline"
@@ -305,7 +313,7 @@ export default function Home() {
                       </Button>
                     </div>
 
-                    {/* 人物検出用のキャンバス */}
+                    {/* 人物検出用のキャンバス（透明なオーバーレイ） */}
                     {showPeopleCounter && (
                       <canvas
                         ref={canvasRef}
@@ -336,6 +344,16 @@ export default function Home() {
                     />
                   </div>
                 )}
+
+                {/* 分析映像表示エリア */}
+                {showIframe && showPeopleCounter && showAnalysisView && (
+                  <div className="mt-4 relative h-[200px] md:h-[200px] bg-black rounded-md overflow-hidden">
+                    <div className="absolute top-2 left-2 z-10">
+                      <span className="text-xs text-white bg-black bg-opacity-50 px-2 py-1 rounded">分析映像</span>
+                    </div>
+                    <canvas ref={analysisCanvasRef} className="w-full h-full" width={640} height={480} />
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-2">
@@ -344,9 +362,16 @@ export default function Home() {
                 </Button>
 
                 {showIframe && (
-                  <Button variant={showPeopleCounter ? "default" : "outline"} onClick={togglePeopleCounter}>
-                    人物カウント {showPeopleCounter ? "オフ" : "オン"}
-                  </Button>
+                  <>
+                    <Button variant={showPeopleCounter ? "default" : "outline"} onClick={togglePeopleCounter}>
+                      人物カウント {showPeopleCounter ? "オフ" : "オン"}
+                    </Button>
+                    {showPeopleCounter && (
+                      <Button variant="outline" onClick={toggleAnalysisView}>
+                        分析映像 {showAnalysisView ? "非表示" : "表示"}
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
 
