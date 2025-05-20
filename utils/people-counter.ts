@@ -120,31 +120,18 @@ export class PeopleCounter {
         // キャンバスのクリア
         ctx.clearRect(0, 0, canvas.width, canvas.height)
   
-        // 分析キャンバスの準備
-        let analysisCtx = null
-        if (this.analysisCanvas) {
-          this.analysisCanvas.width = imgWidth
-          this.analysisCanvas.height = imgHeight
-          analysisCtx = this.analysisCanvas.getContext("2d")
-          if (analysisCtx) {
-            // 分析キャンバスに画像を描画
-            analysisCtx.clearRect(0, 0, imgWidth, imgHeight)
-            analysisCtx.drawImage(imageElement, 0, 0, imgWidth, imgHeight)
-          }
-        }
+        // 分析キャンバスに元の画像を描画
+        ctx.drawImage(imageElement, 0, 0, imgWidth, imgHeight)
   
         // 人物検出の実行
         const predictions = await this.model.detect(imageElement)
         console.log(`検出結果: ${predictions.length}個のオブジェクトを検出`)
   
         // 人物の検出と追跡
-        this.trackPeople(predictions, ctx, analysisCtx)
+        this.trackPeople(predictions, ctx)
   
         // 横断ラインを描画
         this.drawCrossingLine(ctx)
-        if (analysisCtx) {
-          this.drawCrossingLine(analysisCtx)
-        }
       } catch (error) {
         console.error("検出エラー:", error)
       }
@@ -171,11 +158,7 @@ export class PeopleCounter {
     }
   
     // 人物の追跡処理
-    private trackPeople(
-      predictions: any[],
-      ctx: CanvasRenderingContext2D,
-      analysisCtx: CanvasRenderingContext2D | null = null,
-    ) {
+    private trackPeople(predictions: any[], ctx: CanvasRenderingContext2D) {
       // 人物のみをフィルタリング
       const people = predictions.filter((pred) => pred.class === "person")
       console.log(`${people.length}人の人物を検出しました`)
@@ -206,7 +189,7 @@ export class PeopleCounter {
           currentIds.add(closestId)
   
           // 横断ラインとの交差チェック
-          this.checkLineCrossing(trackedPerson, centerX, centerY, lastPosition, ctx, analysisCtx)
+          this.checkLineCrossing(trackedPerson, centerX, centerY, lastPosition, ctx)
         } else {
           // 新しい人物を追加
           const newId = `person_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -221,19 +204,8 @@ export class PeopleCounter {
           console.log(`新しい人物を追跡開始: ID=${newId}, 位置=(${centerX.toFixed(0)}, ${centerY.toFixed(0)})`)
         }
   
-        // バウンディングボックスを描画（メインキャンバス）
+        // バウンディングボックスを描画
         this.drawBoundingBox(ctx, person, centerX, centerY, this.findClosestPerson(centerX, centerY, person.bbox))
-  
-        // 分析キャンバスにもバウンディングボックスを描画
-        if (analysisCtx) {
-          this.drawBoundingBox(
-            analysisCtx,
-            person,
-            centerX,
-            centerY,
-            this.findClosestPerson(centerX, centerY, person.bbox),
-          )
-        }
       }
   
       // 追跡中の人物の状態を更新
@@ -241,9 +213,6 @@ export class PeopleCounter {
         if (!currentIds.has(id)) {
           // このフレームで検出されなかった人物
           this.drawDisappearedPerson(ctx, person)
-          if (analysisCtx) {
-            this.drawDisappearedPerson(analysisCtx, person)
-          }
         }
       }
   
@@ -349,7 +318,6 @@ export class PeopleCounter {
       centerY: number,
       lastPosition: { x: number; y: number },
       ctx: CanvasRenderingContext2D,
-      analysisCtx: CanvasRenderingContext2D | null = null,
     ) {
       if (person.crossed) return
   
@@ -386,15 +354,9 @@ export class PeopleCounter {
   
         // 軌跡を描画
         this.drawTrajectory(ctx, lastPosition, centerX, centerY, direction)
-        if (analysisCtx) {
-          this.drawTrajectory(analysisCtx, lastPosition, centerX, centerY, direction)
-        }
       } else {
         // 移動軌跡を描画
         this.drawMovementPath(ctx, lastPosition, centerX, centerY)
-        if (analysisCtx) {
-          this.drawMovementPath(analysisCtx, lastPosition, centerX, centerY)
-        }
       }
     }
   

@@ -21,12 +21,9 @@ export default function Home() {
   const [peopleCount, setPeopleCount] = useState({ leftToRight: 0, rightToLeft: 0, total: 0 })
   const [debugMode, setDebugMode] = useState(false)
   const [showPeopleCounter, setShowPeopleCounter] = useState(false)
-  const [tfReady, setTfReady] = useState(false)
-  const [modelReady, setModelReady] = useState(false)
   const [scriptsLoaded, setScriptsLoaded] = useState(false) // スクリプト読み込み状態
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const analysisCanvasRef = useRef<HTMLCanvasElement>(null) // 分析表示用のキャンバス
   const peopleCounterRef = useRef<PeopleCounter | null>(null)
   const remoteImageRef = useRef<HTMLImageElement | null>(null)
@@ -65,17 +62,59 @@ export default function Home() {
     }
   }, [])
 
-  // TensorFlow.jsとCOCO-SSDモデルの読み込み状態を監視
-  useEffect(() => {
-    if (scriptsLoaded && showPeopleCounter) {
-      console.log("スクリプトが読み込まれました。人物カウンターを初期化します。")
+  // TensorFlow.jsとCOCO-SSDモデルのスクリプトを読み込む
+  const loadScripts = () => {
+    // すでに読み込まれている場合は何もしない
+    if (scriptsLoaded) return
+
+    // グローバルオブジェクトにスクリプト読み込み状態を追跡するプロパティを追加
+    if (typeof window !== "undefined") {
+      ;(window as any).tfLoaded = false
+      ;(window as any).cocoSsdLoaded = false
+
+      // TensorFlow.jsの読み込み
+      const tfScript = document.createElement("script")
+      tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"
+      tfScript.async = true
+      tfScript.onload = () => {
+        console.log("TensorFlow.js読み込み完了")
+        ;(window as any).tfLoaded = true
+        checkScriptsLoaded()
+
+        // TensorFlow.jsの読み込み完了後にCOCO-SSDを読み込む
+        const cocoSsdScript = document.createElement("script")
+        cocoSsdScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"
+        cocoSsdScript.async = true
+        cocoSsdScript.onload = () => {
+          console.log("COCO-SSDモデル読み込み完了")
+          ;(window as any).cocoSsdLoaded = true
+          checkScriptsLoaded()
+        }
+        document.head.appendChild(cocoSsdScript)
+      }
+      document.head.appendChild(tfScript)
+    }
+  }
+
+  // スクリプトの読み込み状態をチェック
+  const checkScriptsLoaded = () => {
+    if (typeof window !== "undefined" && (window as any).tfLoaded && (window as any).cocoSsdLoaded) {
+      console.log("すべてのスクリプトが読み込まれました")
+      setScriptsLoaded(true)
       initPeopleCounter()
     }
-  }, [scriptsLoaded, showPeopleCounter])
+  }
+
+  // 人物カウント機能が有効になったらスクリプトを読み込む
+  useEffect(() => {
+    if (showPeopleCounter && !scriptsLoaded) {
+      loadScripts()
+    }
+  }, [showPeopleCounter, scriptsLoaded])
 
   // 人物カウンターの初期化
   const initPeopleCounter = () => {
-    if (!peopleCounterRef.current) {
+    if (!peopleCounterRef.current && scriptsLoaded) {
       console.log("人物カウンターを初期化しています...")
       peopleCounterRef.current = new PeopleCounter()
       peopleCounterRef.current.setCountUpdateCallback((count) => {
@@ -138,9 +177,9 @@ export default function Home() {
         remoteImageRef.current.src = event.data.data
 
         // 画像が読み込まれたら人物検出を実行
-        if (showPeopleCounter && peopleCounterRef.current && canvasRef.current) {
+        if (showPeopleCounter && peopleCounterRef.current && analysisCanvasRef.current && scriptsLoaded) {
           console.log("画像データを受信しました - 人物検出を実行します")
-          peopleCounterRef.current.detectPeople(remoteImageRef.current, canvasRef.current)
+          peopleCounterRef.current.detectPeople(remoteImageRef.current, analysisCanvasRef.current)
         }
       }
     }
@@ -150,7 +189,7 @@ export default function Home() {
     return () => {
       window.removeEventListener("message", handleMessage)
     }
-  }, [showPeopleCounter])
+  }, [showPeopleCounter, scriptsLoaded])
 
   // 品質設定の変更
   const handleQualityChange = (value: string) => {
@@ -186,57 +225,6 @@ export default function Home() {
   const togglePeopleCounter = () => {
     setShowPeopleCounter(!showPeopleCounter)
   }
-
-  // TensorFlow.jsとCOCO-SSDモデルのスクリプトを読み込む
-  const loadScripts = () => {
-    // すでに読み込まれている場合は何もしない
-    if (scriptsLoaded) return
-
-    // グローバルオブジェクトにスクリプト読み込み状態を追跡するプロパティを追加
-    if (typeof window !== "undefined") {
-      ;(window as any).tfLoaded = false
-      ;(window as any).cocoSsdLoaded = false
-
-      // TensorFlow.jsの読み込み
-      const tfScript = document.createElement("script")
-      tfScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"
-      tfScript.async = false
-      tfScript.onload = () => {
-        console.log("TensorFlow.js読み込み完了")
-        ;(window as any).tfLoaded = true
-        checkScriptsLoaded()
-      }
-      document.head.appendChild(tfScript)
-
-      // TensorFlow.jsの読み込み完了後にCOCO-SSDを読み込む
-      tfScript.addEventListener("load", () => {
-        const cocoSsdScript = document.createElement("script")
-        cocoSsdScript.src = "https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"
-        cocoSsdScript.async = false
-        cocoSsdScript.onload = () => {
-          console.log("COCO-SSDモデル読み込み完了")
-          ;(window as any).cocoSsdLoaded = true
-          checkScriptsLoaded()
-        }
-        document.head.appendChild(cocoSsdScript)
-      })
-    }
-  }
-
-  // スクリプトの読み込み状態をチェック
-  const checkScriptsLoaded = () => {
-    if (typeof window !== "undefined" && (window as any).tfLoaded && (window as any).cocoSsdLoaded) {
-      console.log("すべてのスクリプトが読み込まれました")
-      setScriptsLoaded(true)
-    }
-  }
-
-  // 人物カウント機能が有効になったらスクリプトを読み込む
-  useEffect(() => {
-    if (showPeopleCounter && !scriptsLoaded) {
-      loadScripts()
-    }
-  }, [showPeopleCounter, scriptsLoaded])
 
   return (
     <div className="container flex items-center justify-center min-h-screen py-4">
@@ -314,7 +302,7 @@ export default function Home() {
               </div>
 
               <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* メインの映像表示エリア */}
+                {/* メインの映像表示エリア - 元の映像のみ */}
                 <div>
                   {!showIframe ? (
                     <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
@@ -333,14 +321,6 @@ export default function Home() {
                         </Button>
                       </div>
 
-                      {/* 人物検出用のキャンバス（透明なオーバーレイ） */}
-                      {showPeopleCounter && (
-                        <canvas
-                          ref={canvasRef}
-                          className="absolute top-0 left-0 w-full h-full z-20 pointer-events-none"
-                        />
-                      )}
-
                       {/* 人物検出用の非表示画像要素 */}
                       {showPeopleCounter && (
                         <img
@@ -351,16 +331,10 @@ export default function Home() {
                           crossOrigin="anonymous"
                           width={640}
                           height={480}
-                          onLoad={() => {
-                            console.log("画像が読み込まれました")
-                            if (peopleCounterRef.current && canvasRef.current) {
-                              peopleCounterRef.current.detectPeople(remoteImageRef.current!, canvasRef.current)
-                            }
-                          }}
                         />
                       )}
 
-                      {/* 常に表示するiframe */}
+                      {/* 元の映像のみを表示するiframe */}
                       <iframe
                         ref={iframeRef}
                         src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
