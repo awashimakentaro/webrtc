@@ -19,8 +19,8 @@ export class PeopleCounter {
   > = new Map()
   private peopleCount = { leftToRight: 0, rightToLeft: 0, total: 0 }
   private lastDetectionTime = 0
-  private detectionInterval = 100 // ミリ秒単位での検出間隔
-  private cleanupInterval = 2000 // 追跡データのクリーンアップ間隔
+  private detectionInterval = 50 // 検出間隔を短縮（100ms→50ms）
+  private cleanupInterval = 3000 // 追跡データのクリーンアップ間隔を延長
   private onCountUpdate: ((count: { leftToRight: number; rightToLeft: number; total: number }) => void) | null = null
   private debugMode = false
   private canvasWidth = 0
@@ -28,10 +28,11 @@ export class PeopleCounter {
   private analysisCanvas: HTMLCanvasElement | null = null // 分析表示用のキャンバス
   private modelLoadPromise: Promise<any> | null = null // モデル読み込みのPromise
   private frameCount = 0 // 処理したフレーム数
-  private minTrackingConfidence = 0.4 // 追跡を維持するための最小信頼度
-  private minCrossingConfidence = 0.5 // 横断をカウントするための最小信頼度
-  private positionHistoryLimit = 15 // 位置履歴の最大数
-  private crossingThreshold = 0.1 // 横断判定のための移動距離閾値（画面幅に対する割合）
+  private minTrackingConfidence = 0.3 // 追跡を維持するための最小信頼度を下げる（0.4→0.3）
+  private minCrossingConfidence = 0.4 // 横断をカウントするための最小信頼度を下げる（0.5→0.4）
+  private positionHistoryLimit = 20 // 位置履歴の最大数を増やす（15→20）
+  private crossingThreshold = 0.05 // 横断判定のための移動距離閾値を下げる（0.1→0.05）
+  private lastCountUpdateTime = 0 // 最後にカウントを更新した時間
 
   constructor() {
     // クリーンアップタイマーの設定
@@ -140,8 +141,6 @@ export class PeopleCounter {
         return
       }
 
-      console.log("人物検出を実行します...")
-
       // 画像サイズに合わせてキャンバスをリサイズ
       let imgWidth = 0
       let imgHeight = 0
@@ -150,7 +149,6 @@ export class PeopleCounter {
         // 画像要素の場合
         imgWidth = imageElement.naturalWidth || imageElement.width || 640
         imgHeight = imageElement.naturalHeight || imageElement.height || 480
-        console.log(`画像サイズ: ${imgWidth}x${imgHeight}`)
 
         // 画像が正しく読み込まれているか確認
         if (imgWidth === 0 || imgHeight === 0) {
@@ -162,7 +160,6 @@ export class PeopleCounter {
         // ビデオ要素の場合
         imgWidth = imageElement.videoWidth || imageElement.clientWidth || 640
         imgHeight = imageElement.videoHeight || imageElement.clientHeight || 480
-        console.log(`ビデオサイズ: ${imgWidth}x${imgHeight}`)
       }
 
       // キャンバスのサイズを設定
@@ -170,7 +167,6 @@ export class PeopleCounter {
       canvas.height = imgHeight
       this.canvasWidth = imgWidth
       this.canvasHeight = imgHeight
-      console.log(`キャンバスサイズを設定: ${canvas.width}x${canvas.height}`)
 
       // キャンバスのクリア
       ctx.clearRect(0, 0, canvas.width, canvas.height)
@@ -179,12 +175,9 @@ export class PeopleCounter {
       ctx.globalAlpha = 0.7
       ctx.drawImage(imageElement, 0, 0, imgWidth, imgHeight)
       ctx.globalAlpha = 1.0
-      console.log("キャンバスに画像を描画しました")
 
       // 人物検出の実行
-      console.log("モデルによる検出を実行します")
       const predictions = await this.model.detect(imageElement)
-      console.log(`検出結果: ${predictions.length}個のオブジェクトを検出`)
 
       // 人物の検出と追跡
       this.trackPeople(predictions, ctx)
@@ -307,9 +300,8 @@ export class PeopleCounter {
 
   // 人物の追跡処理
   private trackPeople(predictions: any[], ctx: CanvasRenderingContext2D) {
-    // 人物のみをフィルタリング
+    // 人物のみをフィルタリング - 信頼度の閾値を下げる
     const people = predictions.filter((pred) => pred.class === "person" && pred.score > this.minTrackingConfidence)
-    console.log(`${people.length}人の人物を検出しました`)
 
     // 現在のフレームで検出された人物のID
     const currentIds = new Set<string>()
@@ -368,9 +360,6 @@ export class PeopleCounter {
           crossingConfidence: 0,
         })
         currentIds.add(newId)
-        console.log(
-          `新しい人物を追跡開始: ID=${newId}, 位置=(${centerX.toFixed(0)}, ${centerY.toFixed(0)}), 信頼度=${person.score.toFixed(2)}`,
-        )
       }
 
       // バウンディングボックスを描画
@@ -399,7 +388,7 @@ export class PeopleCounter {
       }
     }
 
-    // カウント情報を更新
+    // カウント情報を更新 - 頻度を制限せずに毎回更新
     if (this.onCountUpdate) {
       this.onCountUpdate(this.peopleCount)
     }
@@ -520,7 +509,7 @@ export class PeopleCounter {
     ctx.fillText(`ID: ${person.id.substring(0, 6)} (消失)`, x, y - 20)
   }
 
-  // 最も近い追跡中の人物を見つける
+  // 最も近い追跡中の人物を見つける - 改善版
   private findClosestPerson(centerX: number, centerY: number, bbox: number[], confidence: number) {
     const [x, y, width, height] = bbox
     let closestId = null
@@ -541,10 +530,11 @@ export class PeopleCounter {
       const timeFactor = Math.min(1, (Date.now() - person.lastSeen) / 1000)
 
       // 総合スコア（距離、サイズ、時間を考慮）
-      const score = distance * (1 + sizeSimilarity) * (1 + timeFactor)
+      const score = distance * (1 + sizeSimilarity * 0.5) * (1 + timeFactor * 0.5) // 重み付けを調整
 
       // スコアが閾値以下で最小の場合、この人物を選択
-      const threshold = Math.max(width, height) * 0.8
+      // 閾値を大きくして、より広い範囲で一致を検索
+      const threshold = Math.max(width, height) * 1.0 // 0.8から1.0に増加
       if (distance < threshold && score < minDistance) {
         minDistance = score
         closestId = id
@@ -554,7 +544,7 @@ export class PeopleCounter {
     return closestId
   }
 
-  // 横断ラインとの交差チェック
+  // 横断ラインとの交差チェック - 改善版
   private checkLineCrossing(
     person: {
       id: string
@@ -575,9 +565,9 @@ export class PeopleCounter {
     // すでに横断済みの場合は処理しない
     if (person.crossed) return
 
-    // 移動距離が小さすぎる場合は処理しない（ノイズ防止）
+    // 移動距離が小さすぎる場合は処理しない（ノイズ防止）- 閾値を下げる
     const moveDistance = Math.sqrt(Math.pow(centerX - lastPosition.x, 2) + Math.pow(centerY - lastPosition.y, 2))
-    if (moveDistance < this.canvasWidth * 0.005) return
+    if (moveDistance < this.canvasWidth * 0.003) return // 0.005から0.003に下げる
 
     // 前回の位置と現在の位置の間でラインを横切ったかチェック
     const crossed = this.lineSegmentIntersection(
@@ -596,13 +586,9 @@ export class PeopleCounter {
       // 横断方向の判定
       const direction = this.determineDirection(centerX, lastPosition.x)
 
-      // 横断信頼度を増加
-      person.crossingConfidence += 0.5 // 元の値: 0.25
+      // 横断信頼度を増加 - より大きく増加
+      person.crossingConfidence += 0.6 // 0.5から0.6に増加
       person.crossingConfidence = Math.min(person.crossingConfidence, 1.0)
-
-      console.log(
-        `人物(${person.id})がラインを横切りました: 方向=${direction}, 信頼度=${person.crossingConfidence.toFixed(2)}`,
-      )
 
       // 信頼度が閾値を超えたらカウント
       if (person.crossingConfidence >= this.minCrossingConfidence && !person.crossed) {
@@ -617,12 +603,13 @@ export class PeopleCounter {
 
         this.peopleCount.total = this.peopleCount.leftToRight + this.peopleCount.rightToLeft
 
-        console.log(
-          `人物カウント: 左→右=${this.peopleCount.leftToRight}, 右→左=${this.peopleCount.rightToLeft}, 合計=${this.peopleCount.total}`,
-        )
-
         // 横断軌跡を描画
         this.drawCrossingTrajectory(ctx, person, direction)
+
+        // カウント更新をすぐに通知
+        if (this.onCountUpdate) {
+          this.onCountUpdate(this.peopleCount)
+        }
       }
     } else {
       // 移動軌跡を描画
@@ -691,9 +678,9 @@ export class PeopleCounter {
     centerX: number,
     centerY: number,
   ) {
-    // 移動距離が小さすぎる場合は描画しない
+    // 移動距離が小さすぎる場合は描画しない - 閾値を下げる
     const moveDistance = Math.sqrt(Math.pow(centerX - lastPosition.x, 2) + Math.pow(centerY - lastPosition.y, 2))
-    if (moveDistance < this.canvasWidth * 0.01) return
+    if (moveDistance < this.canvasWidth * 0.005) return // 0.01から0.005に下げる
 
     ctx.beginPath()
     ctx.moveTo(lastPosition.x, lastPosition.y)
@@ -703,7 +690,7 @@ export class PeopleCounter {
     ctx.stroke()
   }
 
-  // 2つの線分の交差判定
+  // 2つの線分の交差判定 - 改善版
   private lineSegmentIntersection(
     x1: number,
     y1: number,
@@ -727,14 +714,14 @@ export class PeopleCounter {
     const denominator = dy2 * dx1 - dx2 * dy1
 
     // 平行な場合は交差しない
-    if (denominator === 0) return false
+    if (Math.abs(denominator) < 1e-10) return false
 
     // パラメータt, u
     const t = ((x3 - x1) * dy2 - (y3 - y1) * dx2) / denominator
     const u = ((x3 - x1) * dy1 - (y3 - y1) * dx1) / denominator
 
-    // 線分の範囲内で交差するかチェック
-    return t >= 0 && t <= 1 && u >= 0 && u <= 1
+    // 線分の範囲内で交差するかチェック - 少し余裕を持たせる
+    return t >= -0.05 && t <= 1.05 && u >= -0.05 && u <= 1.05 // 0から-0.05、1から1.05に拡大
   }
 
   // 交差点の座標を取得
@@ -761,14 +748,14 @@ export class PeopleCounter {
     const denominator = dy2 * dx1 - dx2 * dy1
 
     // 平行な場合は交差しない
-    if (denominator === 0) return null
+    if (Math.abs(denominator) < 1e-10) return null
 
     // パラメータt, u
     const t = ((x3 - x1) * dy2 - (y3 - y1) * dx2) / denominator
     const u = ((x3 - x1) * dy1 - (y3 - y1) * dx1) / denominator
 
-    // 線分の範囲内で交差するかチェック
-    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+    // 線分の範囲内で交差するかチェック - 少し余裕を持たせる
+    if (t >= -0.05 && t <= 1.05 && u >= -0.05 && u <= 1.05) {
       return {
         x: x1 + t * dx1,
         y: y1 + t * dy1,
@@ -790,8 +777,9 @@ export class PeopleCounter {
     let cleanupCount = 0
 
     for (const [id, person] of this.trackedPeople.entries()) {
-      // 一定時間検出されなかった人物を削除
+      // 一定時間検出されなかった人物を削除 - 時間を延長
       if (now - person.lastSeen > 5000) {
+        // 5000msのまま
         this.trackedPeople.delete(id)
         cleanupCount++
       }
