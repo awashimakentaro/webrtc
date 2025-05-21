@@ -1,47 +1,72 @@
 "use client"
 
+import React from "react"
+
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CopyIcon, SmartphoneIcon, MonitorIcon, WifiIcon, XIcon, Settings2Icon } from "lucide-react"
+import {
+  CopyIcon,
+  SmartphoneIcon,
+  MonitorIcon,
+  WifiIcon,
+  XIcon,
+  Settings2Icon,
+  PlusIcon,
+  TrashIcon,
+} from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import PeopleCounterDisplay from "@/components/people-counter-display"
 import { PeopleCounter } from "@/utils/people-counter"
+import { Badge } from "@/components/ui/badge"
+
+// カメラ接続情報の型定義
+interface CameraConnection {
+  id: string
+  roomId: string
+  iframeRef: React.RefObject<HTMLIFrameElement>
+  remoteImageRef: React.RefObject<HTMLImageElement>
+  analysisCanvasRef: React.RefObject<HTMLCanvasElement>
+  peopleCounterRef: React.MutableRefObject<PeopleCounter | null>
+  connectionStatus: string
+  quality: string
+  showPeopleCounter: boolean
+  peopleCount: { leftToRight: number; rightToLeft: number; total: number }
+}
 
 export default function Home() {
   const [roomId, setRoomId] = useState("")
   const [isCopied, setIsCopied] = useState(false)
   const [activeTab, setActiveTab] = useState("viewer")
   const [showIframe, setShowIframe] = useState(false)
-  const [connectionStatus, setConnectionStatus] = useState("未接続")
   const [quality, setQuality] = useState("medium")
-  const [peopleCount, setPeopleCount] = useState({ leftToRight: 0, rightToLeft: 0, total: 0 })
   const [debugMode, setDebugMode] = useState(false)
-  const [showPeopleCounter, setShowPeopleCounter] = useState(false)
   const [scriptsLoaded, setScriptsLoaded] = useState(false) // スクリプト読み込み状態
   const [isLoadingScripts, setIsLoadingScripts] = useState(false) // スクリプト読み込み中フラグ
-  const [imageReceived, setImageReceived] = useState(false) // 画像受信フラグ
 
-  const iframeRef = useRef<HTMLIFrameElement>(null)
-  const analysisCanvasRef = useRef<HTMLCanvasElement>(null) // 分析表示用のキャンバス
-  const peopleCounterRef = useRef<PeopleCounter | null>(null)
-  const remoteImageRef = useRef<HTMLImageElement | null>(null)
+  // 複数カメラ接続を管理するための状態
+  const [cameraConnections, setCameraConnections] = useState<CameraConnection[]>([])
+  const [newCameraRoomId, setNewCameraRoomId] = useState("")
+  const [showAddCamera, setShowAddCamera] = useState(false)
+
   const containerRef = useRef<HTMLDivElement>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   // ページロード時にデフォルトのルームIDを設定
   useEffect(() => {
     setRoomId("aizu")
+    setNewCameraRoomId("aizu")
   }, [])
 
   // 接続URLの生成
   const cameraUrl = typeof window !== "undefined" ? `${window.location.origin}?room=${roomId}&mode=camera` : ""
 
   // クリップボードにコピー
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(cameraUrl)
+  const copyToClipboard = (url: string) => {
+    navigator.clipboard.writeText(url)
     setIsCopied(true)
     setTimeout(() => setIsCopied(false), 2000)
   }
@@ -59,6 +84,7 @@ export default function Home() {
 
       if (room) {
         setRoomId(room)
+        setNewCameraRoomId(room)
       }
     }
   }, [])
@@ -94,7 +120,12 @@ export default function Home() {
 
           // スクリプト読み込み完了後に人物カウンターを初期化
           setTimeout(() => {
-            initPeopleCounter()
+            // すべてのカメラ接続の人物カウンターを初期化
+            cameraConnections.forEach((connection) => {
+              if (connection.showPeopleCounter) {
+                initPeopleCounter(connection.id)
+              }
+            })
           }, 500)
         }
         cocoSsdScript.onerror = (e) => {
@@ -113,32 +144,35 @@ export default function Home() {
 
   // 人物カウント機能が有効になったらスクリプトを読み込む
   useEffect(() => {
-    if (showPeopleCounter && !scriptsLoaded && !isLoadingScripts) {
-      loadScripts()
-    } else if (showPeopleCounter && scriptsLoaded && !peopleCounterRef.current) {
-      // スクリプトは読み込まれているが、人物カウンターがまだ初期化されていない場合
-      initPeopleCounter()
-    }
-  }, [showPeopleCounter, scriptsLoaded, isLoadingScripts])
+    const anyPeopleCounterEnabled = cameraConnections.some((conn) => conn.showPeopleCounter)
 
-  // スクリプトが読み込まれたら人物カウンターを初期化
-  useEffect(() => {
-    if (scriptsLoaded && showPeopleCounter && !peopleCounterRef.current) {
-      console.log("スクリプト読み込み完了後の人物カウンター初期化")
-      initPeopleCounter()
+    if (anyPeopleCounterEnabled && !scriptsLoaded && !isLoadingScripts) {
+      loadScripts()
+    } else if (anyPeopleCounterEnabled && scriptsLoaded) {
+      // スクリプトは読み込まれているが、人物カウンターがまだ初期化されていないカメラを初期化
+      cameraConnections.forEach((connection) => {
+        if (connection.showPeopleCounter && !connection.peopleCounterRef.current) {
+          initPeopleCounter(connection.id)
+        }
+      })
     }
-  }, [scriptsLoaded, showPeopleCounter])
+  }, [cameraConnections, scriptsLoaded, isLoadingScripts])
 
   // 人物カウンターの初期化
-  const initPeopleCounter = () => {
-    console.log("人物カウンター初期化開始:", {
-      current: peopleCounterRef.current,
+  const initPeopleCounter = (connectionId: string) => {
+    const connectionIndex = cameraConnections.findIndex((conn) => conn.id === connectionId)
+    if (connectionIndex === -1) return
+
+    const connection = cameraConnections[connectionIndex]
+
+    console.log(`カメラ ${connectionId} の人物カウンター初期化開始:`, {
+      current: connection.peopleCounterRef.current,
       scriptsLoaded,
-      analysisCanvas: analysisCanvasRef.current,
+      analysisCanvas: connection.analysisCanvasRef.current,
     })
 
-    if (!peopleCounterRef.current && scriptsLoaded) {
-      console.log("人物カウンターを初期化しています...")
+    if (!connection.peopleCounterRef.current && scriptsLoaded) {
+      console.log(`カメラ ${connectionId} の人物カウンターを初期化しています...`)
 
       // グローバルオブジェクトのcocoSsdが存在するか確認
       if (typeof window !== "undefined" && !(window as any).cocoSsd) {
@@ -146,61 +180,58 @@ export default function Home() {
         return
       }
 
-      peopleCounterRef.current = new PeopleCounter()
-      peopleCounterRef.current.setCountUpdateCallback((count) => {
-        console.log("カウント更新:", count)
-        setPeopleCount(count)
-      })
-      peopleCounterRef.current.setDebugMode(true) // 常にデバッグモードを有効に
+      connection.peopleCounterRef.current = new PeopleCounter()
+      connection.peopleCounterRef.current.setCountUpdateCallback((count) => {
+        console.log(`カメラ ${connectionId} のカウント更新:`, count)
 
-      if (analysisCanvasRef.current) {
-        console.log("分析キャンバスを設定します")
-        peopleCounterRef.current.setAnalysisCanvas(analysisCanvasRef.current)
+        // 特定のカメラ接続のカウント情報を更新
+        setCameraConnections((prev) =>
+          prev.map((conn) => (conn.id === connectionId ? { ...conn, peopleCount: count } : conn)),
+        )
+      })
+      connection.peopleCounterRef.current.setDebugMode(debugMode)
+
+      if (connection.analysisCanvasRef.current) {
+        console.log(`カメラ ${connectionId} の分析キャンバスを設定します`)
+        connection.peopleCounterRef.current.setAnalysisCanvas(connection.analysisCanvasRef.current)
       } else {
-        console.warn("分析キャンバスが見つかりません")
+        console.warn(`カメラ ${connectionId} の分析キャンバスが見つかりません`)
       }
 
       // 横断ラインを設定
-      updateCrossingLine()
+      updateCrossingLine(connectionId)
 
-      console.log("人物カウンター初期化完了")
-
-      // 既に画像が受信されている場合は、人物検出を実行
-      if (imageReceived && remoteImageRef.current && analysisCanvasRef.current) {
-        console.log("初期化後に既存の画像で人物検出を実行します")
-        setTimeout(() => {
-          if (peopleCounterRef.current && remoteImageRef.current && analysisCanvasRef.current) {
-            peopleCounterRef.current.detectPeople(remoteImageRef.current, analysisCanvasRef.current)
-          }
-        }, 500)
-      }
-    } else if (peopleCounterRef.current) {
-      console.log("人物カウンターは既に初期化されています")
+      console.log(`カメラ ${connectionId} の人物カウンター初期化完了`)
+    } else if (connection.peopleCounterRef.current) {
+      console.log(`カメラ ${connectionId} の人物カウンターは既に初期化されています`)
     } else {
       console.warn("スクリプトが読み込まれていないため、人物カウンターを初期化できません")
     }
   }
 
   // 横断ラインの更新
-  const updateCrossingLine = () => {
-    if (!peopleCounterRef.current) {
-      console.warn("人物カウンターが初期化されていないため、横断ラインを設定できません")
+  const updateCrossingLine = (connectionId: string) => {
+    const connection = cameraConnections.find((conn) => conn.id === connectionId)
+    if (!connection) return
+
+    if (!connection.peopleCounterRef.current) {
+      console.warn(`カメラ ${connectionId} の人物カウンターが初期化されていないため、横断ラインを設定できません`)
       return
     }
 
-    if (!analysisCanvasRef.current) {
-      console.warn("分析キャンバスが見つからないため、横断ラインを設定できません")
+    if (!connection.analysisCanvasRef.current) {
+      console.warn(`カメラ ${connectionId} の分析キャンバスが見つからないため、横断ラインを設定できません`)
       return
     }
 
     // キャンバスの寸法を取得
-    const width = analysisCanvasRef.current.width
-    const height = analysisCanvasRef.current.height
+    const width = connection.analysisCanvasRef.current.width
+    const height = connection.analysisCanvasRef.current.height
 
-    console.log(`横断ラインを設定: キャンバスサイズ=${width}x${height}`)
+    console.log(`カメラ ${connectionId} の横断ラインを設定: キャンバスサイズ=${width}x${height}`)
 
     // 画面の中央に横断ラインを設定（左から右へ）
-    peopleCounterRef.current.setCrossingLine(
+    connection.peopleCounterRef.current.setCrossingLine(
       width * 0.2, // 左端から20%の位置
       height * 0.5, // 上端から50%の位置
       width * 0.8, // 左端から80%の位置
@@ -209,18 +240,28 @@ export default function Home() {
   }
 
   // 画像の読み込み完了ハンドラ
-  const handleImageLoad = () => {
-    console.log("画像が読み込まれました")
-    setImageReceived(true)
+  const handleImageLoad = (connectionId: string) => {
+    console.log(`カメラ ${connectionId} の画像が読み込まれました`)
 
-    if (showPeopleCounter && peopleCounterRef.current && analysisCanvasRef.current && scriptsLoaded) {
-      console.log("画像読み込み完了 - 人物検出を実行します")
-      peopleCounterRef.current.detectPeople(remoteImageRef.current!, analysisCanvasRef.current)
+    const connection = cameraConnections.find((conn) => conn.id === connectionId)
+    if (!connection) return
+
+    if (
+      connection.showPeopleCounter &&
+      connection.peopleCounterRef.current &&
+      connection.analysisCanvasRef.current &&
+      scriptsLoaded
+    ) {
+      console.log(`カメラ ${connectionId} の画像読み込み完了 - 人物検出を実行します`)
+      connection.peopleCounterRef.current.detectPeople(
+        connection.remoteImageRef.current!,
+        connection.analysisCanvasRef.current,
+      )
     } else {
-      console.log("画像は読み込まれましたが、人物検出の条件が揃っていません:", {
-        showPeopleCounter,
-        peopleCounter: !!peopleCounterRef.current,
-        analysisCanvas: !!analysisCanvasRef.current,
+      console.log(`カメラ ${connectionId} の画像は読み込まれましたが、人物検出の条件が揃っていません:`, {
+        showPeopleCounter: connection.showPeopleCounter,
+        peopleCounter: !!connection.peopleCounterRef.current,
+        analysisCanvas: !!connection.analysisCanvasRef.current,
         scriptsLoaded,
       })
     }
@@ -231,31 +272,63 @@ export default function Home() {
     const handleMessage = (event: MessageEvent) => {
       // 接続状態の更新
       if (event.data && event.data.type === "connection-status") {
-        setConnectionStatus(event.data.status)
+        // イベントの送信元のiframeを特定
+        const sourceIframe = Array.from(document.querySelectorAll("iframe")).find(
+          (iframe) => iframe.contentWindow === event.source,
+        ) as HTMLIFrameElement | undefined
+
+        if (sourceIframe) {
+          // iframeのIDからカメラ接続を特定
+          const connectionId = sourceIframe.dataset.connectionId
+          if (connectionId) {
+            // 接続状態を更新
+            setCameraConnections((prev) =>
+              prev.map((conn) => (conn.id === connectionId ? { ...conn, connectionStatus: event.data.status } : conn)),
+            )
+          }
+        }
       }
 
       // 画像データの受信（人物検出用）
-      if (event.data && event.data.type === "image-data" && remoteImageRef.current) {
-        // 画像データを設定
-        remoteImageRef.current.src = event.data.data
-        setImageReceived(true)
+      if (event.data && event.data.type === "image-data") {
+        // イベントの送信元のiframeを特定
+        const sourceIframe = Array.from(document.querySelectorAll("iframe")).find(
+          (iframe) => iframe.contentWindow === event.source,
+        ) as HTMLIFrameElement | undefined
 
-        // 画像が読み込まれたら人物検出を実行（onLoadイベントでも実行されるが、念のため直接も呼び出す）
-        if (showPeopleCounter && peopleCounterRef.current && analysisCanvasRef.current && scriptsLoaded) {
-          console.log("画像データを受信しました - 人物検出を実行します")
-          // 少し遅延を入れて画像の読み込みを待つ
-          setTimeout(() => {
-            if (peopleCounterRef.current && remoteImageRef.current && analysisCanvasRef.current) {
-              peopleCounterRef.current.detectPeople(remoteImageRef.current, analysisCanvasRef.current)
+        if (sourceIframe) {
+          // iframeのIDからカメラ接続を特定
+          const connectionId = sourceIframe.dataset.connectionId
+          if (connectionId) {
+            const connection = cameraConnections.find((conn) => conn.id === connectionId)
+            if (connection && connection.remoteImageRef.current) {
+              // 画像データを設定
+              connection.remoteImageRef.current.src = event.data.data
+
+              // 画像が読み込まれたら人物検出を実行
+              if (
+                connection.showPeopleCounter &&
+                connection.peopleCounterRef.current &&
+                connection.analysisCanvasRef.current &&
+                scriptsLoaded
+              ) {
+                console.log(`カメラ ${connectionId} の画像データを受信しました - 人物検出を実行します`)
+                // 少し遅延を入れて画像の読み込みを待つ
+                setTimeout(() => {
+                  if (
+                    connection.peopleCounterRef.current &&
+                    connection.remoteImageRef.current &&
+                    connection.analysisCanvasRef.current
+                  ) {
+                    connection.peopleCounterRef.current.detectPeople(
+                      connection.remoteImageRef.current,
+                      connection.analysisCanvasRef.current,
+                    )
+                  }
+                }, 100)
+              }
             }
-          }, 100)
-        } else {
-          console.log("画像データを受信しましたが、人物検出の条件が揃っていません:", {
-            showPeopleCounter,
-            peopleCounter: !!peopleCounterRef.current,
-            analysisCanvas: !!analysisCanvasRef.current,
-            scriptsLoaded,
-          })
+          }
         }
       }
     }
@@ -265,13 +338,17 @@ export default function Home() {
     return () => {
       window.removeEventListener("message", handleMessage)
     }
-  }, [showPeopleCounter, scriptsLoaded])
+  }, [cameraConnections, scriptsLoaded])
 
   // 品質設定の変更
-  const handleQualityChange = (value: string) => {
-    setQuality(value)
-    if (iframeRef.current && iframeRef.current.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
+  const handleQualityChange = (connectionId: string, value: string) => {
+    // 特定のカメラ接続の品質設定を更新
+    setCameraConnections((prev) => prev.map((conn) => (conn.id === connectionId ? { ...conn, quality: value } : conn)))
+
+    // 対応するiframeに品質変更メッセージを送信
+    const connection = cameraConnections.find((conn) => conn.id === connectionId)
+    if (connection && connection.iframeRef.current && connection.iframeRef.current.contentWindow) {
+      connection.iframeRef.current.contentWindow.postMessage(
         {
           type: "quality-change",
           quality: value,
@@ -282,9 +359,10 @@ export default function Home() {
   }
 
   // 人物カウントのリセット
-  const resetPeopleCount = () => {
-    if (peopleCounterRef.current) {
-      peopleCounterRef.current.resetCount()
+  const resetPeopleCount = (connectionId: string) => {
+    const connection = cameraConnections.find((conn) => conn.id === connectionId)
+    if (connection && connection.peopleCounterRef.current) {
+      connection.peopleCounterRef.current.resetCount()
     }
   }
 
@@ -292,35 +370,181 @@ export default function Home() {
   const toggleDebugMode = () => {
     const newDebugMode = !debugMode
     setDebugMode(newDebugMode)
-    if (peopleCounterRef.current) {
-      peopleCounterRef.current.setDebugMode(newDebugMode)
-    }
+
+    // すべてのカメラ接続のデバッグモードを更新
+    cameraConnections.forEach((connection) => {
+      if (connection.peopleCounterRef.current) {
+        connection.peopleCounterRef.current.setDebugMode(newDebugMode)
+      }
+    })
   }
 
   // 人物カウント機能の切り替え
-  const togglePeopleCounter = () => {
-    const newState = !showPeopleCounter
-    setShowPeopleCounter(newState)
+  const togglePeopleCounter = (connectionId: string) => {
+    setCameraConnections((prev) =>
+      prev.map((conn) => {
+        if (conn.id === connectionId) {
+          const newState = !conn.showPeopleCounter
+          return { ...conn, showPeopleCounter: newState }
+        }
+        return conn
+      }),
+    )
 
     // 有効にする場合は、スクリプトの読み込みと初期化を確認
-    if (newState) {
-      console.log("人物カウント機能を有効にします")
-      if (!scriptsLoaded && !isLoadingScripts) {
-        loadScripts()
-      } else if (scriptsLoaded && !peopleCounterRef.current) {
-        initPeopleCounter()
+    const connection = cameraConnections.find((conn) => conn.id === connectionId)
+    if (connection) {
+      const newState = !connection.showPeopleCounter
+      if (newState) {
+        console.log(`カメラ ${connectionId} の人物カウント機能を有効にします`)
+        if (!scriptsLoaded && !isLoadingScripts) {
+          loadScripts()
+        } else if (scriptsLoaded && !connection.peopleCounterRef.current) {
+          initPeopleCounter(connectionId)
+        }
+      } else {
+        console.log(`カメラ ${connectionId} の人物カウント機能を無効にします`)
       }
-    } else {
-      console.log("人物カウント機能を無効にします")
     }
   }
 
+  // 新しいカメラ接続を追加
+  const addCameraConnection = () => {
+    if (!newCameraRoomId) return
+
+    // 既に同じルームIDの接続がある場合は追加しない
+    if (cameraConnections.some((conn) => conn.roomId === newCameraRoomId)) {
+      alert(`ルームID "${newCameraRoomId}" の接続は既に存在します。`)
+      return
+    }
+
+    const newConnectionId = `camera-${Date.now()}`
+
+    setCameraConnections((prev) => [
+      ...prev,
+      {
+        id: newConnectionId,
+        roomId: newCameraRoomId,
+        iframeRef: React.createRef<HTMLIFrameElement>(),
+        remoteImageRef: React.createRef<HTMLImageElement>(),
+        analysisCanvasRef: React.createRef<HTMLCanvasElement>(),
+        peopleCounterRef: React.useRef<PeopleCounter | null>(null),
+        connectionStatus: "未接続",
+        quality: "medium",
+        showPeopleCounter: false,
+        peopleCount: { leftToRight: 0, rightToLeft: 0, total: 0 },
+      },
+    ])
+
+    setNewCameraRoomId("")
+    setShowAddCamera(false)
+  }
+
+  // カメラ接続を削除
+  const removeCameraConnection = (connectionId: string) => {
+    setCameraConnections((prev) => prev.filter((conn) => conn.id !== connectionId))
+  }
+
+  // カメラモードの場合のレンダリング
+  if (activeTab === "camera") {
+    const connectionStatusClassName = cameraConnections[0]?.connectionStatus.includes("接続済み")
+      ? "text-green-500"
+      : cameraConnections[0]?.connectionStatus.includes("接続中")
+        ? "text-amber-500"
+        : "text-gray-500"
+    return (
+      <div className="container flex items-center justify-center min-h-screen py-4">
+        <Card className="w-full max-w-4xl">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
+            <CardDescription className="text-center">スマートフォンカメラの映像をブラウザに表示します</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-4">
+                <TabsTrigger value="viewer">
+                  <MonitorIcon className="w-4 h-4 mr-2" />
+                  視聴モード（PC）
+                </TabsTrigger>
+                <TabsTrigger value="camera">
+                  <SmartphoneIcon className="w-4 h-4 mr-2" />
+                  カメラモード（スマホ）
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="camera" className="space-y-4">
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <Label htmlFor="camera-room-id" className="text-sm">
+                      ルームID
+                    </Label>
+                    <Input
+                      id="camera-room-id"
+                      value={roomId}
+                      onChange={(e) => setRoomId(e.target.value)}
+                      placeholder="ルームIDを入力"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <WifiIcon className="w-4 h-4" />
+                    <p className="text-sm whitespace-nowrap">
+                      接続状態:{" "}
+                      <span className={connectionStatusClassName}>
+                        {cameraConnections[0]?.connectionStatus || "未接続"}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-2">
+                  {!showIframe ? (
+                    <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
+                      「カメラを開始」ボタンをクリックしてカメラを起動します
+                    </div>
+                  ) : (
+                    <div className="relative h-[500px] md:h-[600px]">
+                      <div className="absolute top-2 right-2 z-10">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-6 w-6 rounded-full bg-white"
+                          onClick={() => setShowIframe(false)}
+                        >
+                          <XIcon className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <iframe
+                        ref={iframeRef}
+                        src={`/api/connect?room=${roomId}&mode=camera&embedded=true`}
+                        className="w-full h-full rounded-md border-0"
+                        allow="camera;microphone"
+                        title="カメラプレビュー"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <Button className="w-full" onClick={() => setShowIframe(true)} disabled={showIframe}>
+                  カメラを開始
+                </Button>
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // 視聴モードの場合のレンダリング
   return (
     <div className="container flex items-center justify-center min-h-screen py-4">
-      <Card className="w-full max-w-4xl">
+      <Card className="w-full max-w-6xl">
         <CardHeader className="pb-2">
           <CardTitle className="text-2xl text-center">リモートカメラビューアー</CardTitle>
-          <CardDescription className="text-center">スマートフォンカメラの映像をブラウザに表示します</CardDescription>
+          <CardDescription className="text-center">
+            複数のスマートフォンカメラの映像をブラウザに表示します
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -336,236 +560,200 @@ export default function Home() {
             </TabsList>
 
             <TabsContent value="viewer" className="space-y-4">
-              <div className="flex items-center gap-4">
-                <div className="flex-1">
-                  <Label htmlFor="room-id" className="text-sm">
-                    ルームID
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="room-id"
-                      value={roomId}
-                      onChange={(e) => setRoomId(e.target.value)}
-                      placeholder="ルームIDを入力"
-                    />
-                    <Button variant="outline" size="icon" onClick={copyToClipboard}>
-                      <CopyIcon className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  {isCopied && <p className="text-xs text-green-500">コピーしました！</p>}
+              {/* カメラ接続がない場合の表示 */}
+              {cameraConnections.length === 0 && (
+                <div className="flex flex-col items-center justify-center p-8 bg-gray-50 rounded-lg">
+                  <p className="mb-4 text-gray-500">カメラが接続されていません</p>
+                  <Button onClick={() => setShowAddCamera(true)}>
+                    <PlusIcon className="w-4 h-4 mr-2" />
+                    カメラを追加
+                  </Button>
                 </div>
+              )}
 
-                <div className="flex items-center gap-2">
-                  <WifiIcon className="w-4 h-4" />
-                  <p className="text-sm whitespace-nowrap">
-                    接続状態:{" "}
-                    <span
-                      className={
-                        connectionStatus.includes("接続済み")
-                          ? "text-green-500"
-                          : connectionStatus.includes("接続中")
-                            ? "text-amber-500"
-                            : "text-gray-500"
-                      }
-                    >
-                      {connectionStatus}
-                    </span>
-                  </p>
-                </div>
-
-                {showIframe && (
-                  <div className="flex items-center gap-2">
-                    <Settings2Icon className="w-4 h-4" />
-                    <Select value={quality} onValueChange={handleQualityChange}>
-                      <SelectTrigger className="w-[120px] h-8">
-                        <SelectValue placeholder="画質設定" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="high">高画質 (低FPS)</SelectItem>
-                        <SelectItem value="medium">標準 (中FPS)</SelectItem>
-                        <SelectItem value="low">低画質 (高FPS)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* メインの映像表示エリア - 元の映像のみ */}
-                <div>
-                  {!showIframe ? (
-                    <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
-                      カメラが接続されるとここに映像が表示されます
-                    </div>
-                  ) : (
-                    <div ref={containerRef} className="relative h-[500px] md:h-[600px]">
-                      <div className="absolute top-2 right-2 z-10">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-6 w-6 rounded-full bg-white"
-                          onClick={() => setShowIframe(false)}
-                        >
-                          <XIcon className="h-3 w-3" />
+              {/* カメラ追加フォーム */}
+              {showAddCamera && (
+                <Card className="mb-4">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-lg">新しいカメラを追加</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <Label htmlFor="new-room-id" className="text-sm">
+                          ルームID
+                        </Label>
+                        <Input
+                          id="new-room-id"
+                          value={newCameraRoomId}
+                          onChange={(e) => setNewCameraRoomId(e.target.value)}
+                          placeholder="ルームIDを入力"
+                        />
+                      </div>
+                      <div className="flex items-end gap-2">
+                        <Button onClick={addCameraConnection}>追加</Button>
+                        <Button variant="outline" onClick={() => setShowAddCamera(false)}>
+                          キャンセル
                         </Button>
                       </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
-                      {/* 人物検出用の非表示画像要素 */}
-                      {showPeopleCounter && (
-                        <img
-                          ref={remoteImageRef}
-                          id="remote-image-for-detection"
-                          className="hidden"
-                          alt="カメラ映像"
-                          crossOrigin="anonymous"
+              {/* カメラ接続リスト */}
+              {cameraConnections.map((connection, index) => (
+                <div key={connection.id} className="mb-8 border rounded-lg p-4">
+                  <div className="flex justify-between items-center mb-4">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-medium">カメラ {index + 1}</h3>
+                      <Badge variant={connection.connectionStatus.includes("接続済み") ? "success" : "secondary"}>
+                        {connection.connectionStatus}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          copyToClipboard(`${window.location.origin}?room=${connection.roomId}&mode=camera`)
+                        }
+                      >
+                        <CopyIcon className="w-4 h-4 mr-1" />
+                        URLをコピー
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => removeCameraConnection(connection.id)}>
+                        <TrashIcon className="w-4 h-4 mr-1" />
+                        削除
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 mb-2">
+                    <div className="flex-1">
+                      <Label htmlFor={`room-id-${connection.id}`} className="text-sm">
+                        ルームID
+                      </Label>
+                      <Input
+                        id={`room-id-${connection.id}`}
+                        value={connection.roomId}
+                        onChange={(e) => {
+                          setCameraConnections((prev) =>
+                            prev.map((conn) =>
+                              conn.id === connection.id ? { ...conn, roomId: e.target.value } : conn,
+                            ),
+                          )
+                        }}
+                        placeholder="ルームIDを入力"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Settings2Icon className="w-4 h-4" />
+                      <Select
+                        value={connection.quality}
+                        onValueChange={(value) => handleQualityChange(connection.id, value)}
+                      >
+                        <SelectTrigger className="w-[120px] h-8">
+                          <SelectValue placeholder="画質設定" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="high">高画質 (低FPS)</SelectItem>
+                          <SelectItem value="medium">標準 (中FPS)</SelectItem>
+                          <SelectItem value="low">低画質 (高FPS)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    {/* メインの映像表示エリア */}
+                    <div>
+                      <div className="relative h-[300px] md:h-[400px] bg-black rounded-md overflow-hidden">
+                        {/* 人物検出用の非表示画像要素 */}
+                        {connection.showPeopleCounter && (
+                          <img
+                            ref={connection.remoteImageRef}
+                            className="hidden"
+                            alt="カメラ映像"
+                            crossOrigin="anonymous"
+                            width={640}
+                            height={480}
+                            onLoad={() => handleImageLoad(connection.id)}
+                          />
+                        )}
+
+                        {/* 映像を表示するiframe */}
+                        <iframe
+                          ref={connection.iframeRef}
+                          data-connection-id={connection.id}
+                          src={`/api/connect?room=${connection.roomId}&mode=viewer&embedded=true`}
+                          className="w-full h-full rounded-md border-0"
+                          allow="camera;microphone"
+                          title={`カメラ ${index + 1}`}
+                        />
+                      </div>
+                    </div>
+
+                    {/* 分析映像表示エリア */}
+                    <div className="relative h-[300px] md:h-[400px] bg-black rounded-md overflow-hidden">
+                      <div className="absolute top-2 left-2 z-10">
+                        <span className="text-xs text-white bg-black bg-opacity-50 px-2 py-1 rounded">分析映像</span>
+                      </div>
+                      {!connection.showPeopleCounter ? (
+                        <div className="w-full h-full flex items-center justify-center text-gray-400">
+                          人物カウント機能を有効にすると分析映像が表示されます
+                        </div>
+                      ) : (
+                        <canvas
+                          ref={connection.analysisCanvasRef}
+                          className="w-full h-full object-contain"
                           width={640}
                           height={480}
-                          onLoad={handleImageLoad}
+                          style={{ background: "#000" }}
                         />
                       )}
+                    </div>
+                  </div>
 
-                      {/* 元の映像のみを表示するiframe */}
-                      <iframe
-                        ref={iframeRef}
-                        src={`/api/connect?room=${roomId}&mode=viewer&embedded=true`}
-                        className="w-full h-full rounded-md border-0"
-                        allow="camera;microphone"
-                        title="リモートカメラ"
+                  <div className="flex gap-2 mb-4">
+                    <Button
+                      variant={connection.showPeopleCounter ? "default" : "outline"}
+                      onClick={() => togglePeopleCounter(connection.id)}
+                      className="flex-1"
+                    >
+                      人物カウント {connection.showPeopleCounter ? "オフ" : "オン"}
+                    </Button>
+                  </div>
+
+                  {/* 人物カウント表示 */}
+                  {connection.showPeopleCounter && (
+                    <div className="mt-2">
+                      <PeopleCounterDisplay
+                        count={connection.peopleCount}
+                        onReset={() => resetPeopleCount(connection.id)}
+                        onToggleDebug={toggleDebugMode}
+                        debugMode={debugMode}
                       />
                     </div>
                   )}
                 </div>
+              ))}
 
-                {/* 分析映像表示エリア - 常に表示 */}
-                <div className="relative h-[500px] md:h-[600px] bg-black rounded-md overflow-hidden">
-                  <div className="absolute top-2 left-2 z-10">
-                    <span className="text-xs text-white bg-black bg-opacity-50 px-2 py-1 rounded">分析映像</span>
-                  </div>
-                  {!showPeopleCounter ? (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400">
-                      人物カウント機能を有効にすると分析映像が表示されます
-                    </div>
-                  ) : (
-                    <canvas
-                      ref={analysisCanvasRef}
-                      className="w-full h-full object-contain"
-                      width={640}
-                      height={480}
-                      style={{ background: "#000" }}
-                    />
-                  )}
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <Button className="flex-1" onClick={() => setShowIframe(true)} disabled={showIframe}>
-                  接続開始
+              {/* カメラ追加ボタン */}
+              <div className="flex justify-center mt-4">
+                <Button onClick={() => setShowAddCamera(true)}>
+                  <PlusIcon className="w-4 h-4 mr-2" />
+                  カメラを追加
                 </Button>
-
-                {showIframe && (
-                  <Button variant={showPeopleCounter ? "default" : "outline"} onClick={togglePeopleCounter}>
-                    人物カウント {showPeopleCounter ? "オフ" : "オン"}
-                  </Button>
-                )}
               </div>
 
               {/* スクリプト読み込み状態 */}
-              {showPeopleCounter && isLoadingScripts && (
+              {cameraConnections.some((conn) => conn.showPeopleCounter) && isLoadingScripts && (
                 <div className="mt-2 text-center text-sm text-amber-500">
                   人物検出モデルを読み込み中... しばらくお待ちください。
                 </div>
               )}
-
-              {/* デバッグ情報 */}
-              {showPeopleCounter && (
-                <div className="mt-2 text-xs text-gray-500">
-                  <p>スクリプト読み込み: {scriptsLoaded ? "完了" : isLoadingScripts ? "読み込み中" : "未読み込み"}</p>
-                  <p>人物カウンター: {peopleCounterRef.current ? "初期化済み" : "未初期化"}</p>
-                  <p>画像受信: {imageReceived ? "受信済み" : "未受信"}</p>
-                </div>
-              )}
-
-              {/* 人物カウント表示 */}
-              {showPeopleCounter && showIframe && (
-                <div className="mt-4">
-                  <PeopleCounterDisplay
-                    count={peopleCount}
-                    onReset={resetPeopleCount}
-                    onToggleDebug={toggleDebugMode}
-                    debugMode={debugMode}
-                  />
-                  <div className="mt-2 text-xs text-gray-500">
-                    <p>※ 左→右: 画面左から右へ移動した人数、右→左: 画面右から左へ移動した人数</p>
-                    <p>※ 合計: 両方向の通過人数の合計</p>
-                  </div>
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="camera" className="space-y-4">
-              <div className="flex items-center gap-4">
-                <div className="flex-1">
-                  <Label htmlFor="camera-room-id" className="text-sm">
-                    ルームID
-                  </Label>
-                  <Input
-                    id="camera-room-id"
-                    value={roomId}
-                    onChange={(e) => setRoomId(e.target.value)}
-                    placeholder="ルームIDを入力"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <WifiIcon className="w-4 h-4" />
-                  <p className="text-sm whitespace-nowrap">
-                    接続状態:{" "}
-                    <span
-                      className={
-                        connectionStatus.includes("接続済み")
-                          ? "text-green-500"
-                          : connectionStatus.includes("接続中")
-                            ? "text-amber-500"
-                            : "text-gray-500"
-                      }
-                    >
-                      {connectionStatus}
-                    </span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-2">
-                {!showIframe ? (
-                  <div className="relative h-[500px] md:h-[600px] bg-gray-100 rounded-md overflow-hidden flex items-center justify-center text-gray-400">
-                    「カメラを開始」ボタンをクリックしてカメラを起動します
-                  </div>
-                ) : (
-                  <div className="relative h-[500px] md:h-[600px]">
-                    <div className="absolute top-2 right-2 z-10">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-6 w-6 rounded-full bg-white"
-                        onClick={() => setShowIframe(false)}
-                      >
-                        <XIcon className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    <iframe
-                      ref={iframeRef}
-                      src={`/api/connect?room=${roomId}&mode=camera&embedded=true`}
-                      className="w-full h-full rounded-md border-0"
-                      allow="camera;microphone"
-                      title="カメラプレビュー"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <Button className="w-full" onClick={() => setShowIframe(true)} disabled={showIframe}>
-                カメラを開始
-              </Button>
             </TabsContent>
           </Tabs>
         </CardContent>
