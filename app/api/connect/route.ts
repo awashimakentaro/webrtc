@@ -96,23 +96,6 @@ export async function GET(request: NextRequest) {
           line-height: 20px;
         }
         
-        #debug-panel {
-          position: fixed;
-          bottom: 40px;
-          right: 10px;
-          width: 250px;
-          max-height: 150px;
-          overflow-y: auto;
-          background: rgba(0,0,0,0.5);
-          color: white;
-          padding: 5px;
-          font-size: 10px;
-          z-index: 90;
-          border-radius: 5px;
-          display: none;
-          opacity: 0.7;
-        }
-        
         #control-panel {
           position: absolute;
           bottom: 50px;
@@ -284,13 +267,9 @@ export async function GET(request: NextRequest) {
         
         <div id="control-panel">
           <button id="reconnect-btn" class="btn">再接続</button>
-          <button id="fit-toggle-btn" class="btn">表示切替</button>
         </div>
         
-        <button id="debug-btn" class="btn" style="position: fixed; bottom: 40px; right: 10px; z-index: 100; font-size: 12px; padding: 5px 10px; opacity: 0.5; min-width: auto;">デバッグ</button>
-        
         <div id="status-bar">接続中...</div>
-        <div id="debug-panel"></div>
         <div id="performance-stats"></div>
       </div>
 
@@ -303,40 +282,23 @@ export async function GET(request: NextRequest) {
         const localVideo = document.getElementById('local-video');
         const remoteImage = document.getElementById('remote-image');
         const statusBar = document.getElementById('status-bar');
-        const debugPanel = document.getElementById('debug-panel');
-        const debugBtn = document.getElementById('debug-btn');
         const reconnectBtn = document.getElementById('reconnect-btn');
         const switchCameraBtn = document.getElementById('switch-camera-btn');
         const torchBtn = document.getElementById('torch-btn');
         const cameraInfo = document.getElementById('camera-info');
         const cameraSelect = document.getElementById('camera-select');
         const connectionIndicator = document.getElementById('connection-indicator');
-        const fitToggleBtn = document.getElementById('fit-toggle-btn');
         const performanceStats = document.getElementById('performance-stats');
         const qualitySelect = document.getElementById('quality-select');
-
-        // 表示切替ボタンのイベントリスナー
-        fitToggleBtn.addEventListener('click', toggleVideoFit);
-        
-        // デバッグ表示の切り替え
-        debugBtn.addEventListener('click', () => {
-          debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
-        });
         
         // 再接続ボタン
         reconnectBtn.addEventListener('click', () => {
           location.reload();
         });
         
-        // 初期状態ではデバッグを表示（問題診断のため）
-        debugPanel.style.display = 'block';
-        
         // ログ関数
         function log(message) {
           console.log(message);
-          const timestamp = new Date().toLocaleTimeString();
-          debugPanel.innerHTML += \`[\${timestamp}] \${message}<br>\`;
-          debugPanel.scrollTop = debugPanel.scrollHeight;
         }
 
         // 基本設定
@@ -577,34 +539,6 @@ export async function GET(request: NextRequest) {
         
         // カメラ切り替えボタンのイベント
         switchCameraBtn.addEventListener('click', () => switchCamera());
-        
-        // ビデオ表示モードの切り替え（contain/cover）
-        function toggleVideoFit() {
-          const elements = [localVideo, remoteImage];
-          
-          elements.forEach(element => {
-            if (element) {
-              const currentFit = element.style.objectFit;
-              element.style.objectFit = currentFit === 'cover' ? 'contain' : 'cover';
-              log(\`表示モード: \${element.style.objectFit}\`);
-            }
-          });
-        }
-
-        // ダブルタップでビデオ表示モードを切り替える
-        videoContainer.addEventListener('dblclick', toggleVideoFit);
-
-        // タッチデバイス用のダブルタップ検出
-        let lastTap = 0;
-        videoContainer.addEventListener('touchend', function(e) {
-          const currentTime = new Date().getTime();
-          const tapLength = currentTime - lastTap;
-          if (tapLength < 500 && tapLength > 0) {
-            toggleVideoFit();
-            e.preventDefault();
-          }
-          lastTap = currentTime;
-        });
         
         // フレーム送信を開始
         function startFrameSending() {
