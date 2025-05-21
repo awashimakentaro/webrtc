@@ -85,7 +85,7 @@ export default function CameraViewer({
     })
 
     if (!peopleCounterRef.current && scriptsLoaded) {
-      console.log(`カメラ ${id} の人物カウンターを初期化しています...`)
+      console.log(`カ���ラ ${id} の人物カウンターを初期化しています...`)
 
       // グローバルオブジェクトのcocoSsdが存在するか確認
       if (typeof window !== "undefined" && !(window as any).cocoSsd) {
