@@ -28,8 +28,8 @@ export class PeopleCounter {
   private analysisCanvas: HTMLCanvasElement | null = null // 分析表示用のキャンバス
   private modelLoadPromise: Promise<any> | null = null // モデル読み込みのPromise
   private frameCount = 0 // 処理したフレーム数
-  private minTrackingConfidence = 0.3 // 追跡を維持するための最小信頼度を下げる（0.4→0.3）
-  private minCrossingConfidence = 0.3 // 横断をカウントするための最小信頼度を下げる（0.4→0.3）
+  private minTrackingConfidence = 0.25 // 追跡を維持するための最小信頼度を下げる（0.4→0.3）
+  private minCrossingConfidence = 0.2 // 横断をカウントするための最小信頼度を下げる（0.4→0.3）
   private positionHistoryLimit = 20 // 位置履歴の最大数を増やす（15→20）
   private crossingThreshold = 0.05 // 横断判定のための移動距離閾値を下げる（0.1→0.05）
   private lastCountUpdateTime = 0 // 最後にカウントを更新した時間
@@ -534,7 +534,7 @@ export class PeopleCounter {
 
       // スコアが閾値以下で最小の場合、この人物を選択
       // 閾値を大きくして、より広い範囲で一致を検索
-      const threshold = Math.max(width, height) * 1.0 // 0.8から1.0に増加
+      const threshold = Math.max(width, height) * 1.2 // 0.8から1.0に増加
       if (distance < threshold && score < minDistance) {
         minDistance = score
         closestId = id
@@ -567,7 +567,7 @@ export class PeopleCounter {
 
     // 移動距離が小さすぎる場合は処理しない（ノイズ防止）- 閾値をさらに下げる
     const moveDistance = Math.sqrt(Math.pow(centerX - lastPosition.x, 2) + Math.pow(centerY - lastPosition.y, 2))
-    if (moveDistance < this.canvasWidth * 0.002) return // 0.003から0.002に下げる
+    if (moveDistance < this.canvasWidth * 0.001) return // 0.003から0.002に下げる
 
     // 前回の位置と現在の位置の間でラインを横切ったかチェック
     const crossed = this.lineSegmentIntersection(
@@ -587,7 +587,7 @@ export class PeopleCounter {
       const direction = this.determineDirection(centerX, lastPosition.x)
 
       // 横断信頼度を増加 - より大きく増加
-      person.crossingConfidence += 0.7 // 0.6から0.7に増加
+      person.crossingConfidence += 0.8 // 0.6から0.7に増加
       person.crossingConfidence = Math.min(person.crossingConfidence, 1.0)
 
       // 信頼度が閾値を超えたらカウント
@@ -721,7 +721,7 @@ export class PeopleCounter {
     const u = ((x3 - x1) * dy1 - (y3 - y1) * dx1) / denominator
 
     // 線分の範囲内で交差するかチェック - 少し余裕を持たせる
-    return t >= -0.1 && t <= 1.1 && u >= -0.1 && u <= 1.1 // 0から-0.05、1から1.05に拡大
+    return t >= -0.15 && t <= 1.15 && u >= -0.15 && u <= 1.15 // 0から-0.05、1から1.05に拡大
   }
 
   // 交差点の座標を取得
