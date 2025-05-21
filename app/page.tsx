@@ -31,10 +31,9 @@ export default function Home() {
   const remoteImageRef = useRef<HTMLImageElement | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // ページロード時に一意のルームIDを生成
+  // ページロード時にデフォルトのルームIDを設定
   useEffect(() => {
-    const generatedRoomId = Math.random().toString(36).substring(2, 8)
-    setRoomId(generatedRoomId)
+    setRoomId("aizu")
   }, [])
 
   // 接続URLの生成
