@@ -19,7 +19,7 @@ export class PeopleCounter {
   > = new Map()
   private peopleCount = { leftToRight: 0, rightToLeft: 0, total: 0 }
   private lastDetectionTime = 0
-  private detectionInterval = 150 // ミリ秒単位での検出間隔
+  private detectionInterval = 100 // ミリ秒単位での検出間隔
   private cleanupInterval = 2000 // 追跡データのクリーンアップ間隔
   private onCountUpdate: ((count: { leftToRight: number; rightToLeft: number; total: number }) => void) | null = null
   private debugMode = false
@@ -28,10 +28,10 @@ export class PeopleCounter {
   private analysisCanvas: HTMLCanvasElement | null = null // 分析表示用のキャンバス
   private modelLoadPromise: Promise<any> | null = null // モデル読み込みのPromise
   private frameCount = 0 // 処理したフレーム数
-  private minTrackingConfidence = 0.6 // 追跡を維持するための最小信頼度
-  private minCrossingConfidence = 0.75 // 横断をカウントするための最小信頼度
-  private positionHistoryLimit = 10 // 位置履歴の最大数
-  private crossingThreshold = 0.2 // 横断判定のための移動距離閾値（画面幅に対する割合）
+  private minTrackingConfidence = 0.4 // 追跡を維持するための最小信頼度
+  private minCrossingConfidence = 0.5 // 横断をカウントするための最小信頼度
+  private positionHistoryLimit = 15 // 位置履歴の最大数
+  private crossingThreshold = 0.1 // 横断判定のための移動距離閾値（画面幅に対する割合）
 
   constructor() {
     // クリーンアップタイマーの設定
@@ -577,7 +577,7 @@ export class PeopleCounter {
 
     // 移動距離が小さすぎる場合は処理しない（ノイズ防止）
     const moveDistance = Math.sqrt(Math.pow(centerX - lastPosition.x, 2) + Math.pow(centerY - lastPosition.y, 2))
-    if (moveDistance < this.canvasWidth * 0.01) return
+    if (moveDistance < this.canvasWidth * 0.005) return
 
     // 前回の位置と現在の位置の間でラインを横切ったかチェック
     const crossed = this.lineSegmentIntersection(
@@ -597,7 +597,7 @@ export class PeopleCounter {
       const direction = this.determineDirection(centerX, lastPosition.x)
 
       // 横断信頼度を増加
-      person.crossingConfidence += 0.25
+      person.crossingConfidence += 0.5 // 元の値: 0.25
       person.crossingConfidence = Math.min(person.crossingConfidence, 1.0)
 
       console.log(

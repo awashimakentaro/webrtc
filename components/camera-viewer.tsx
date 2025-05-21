@@ -142,11 +142,11 @@ export default function CameraViewer({
 
     console.log(`カメラ ${id} の横断ラインを設定: キャンバスサイズ=${width}x${height}`)
 
-    // 画面の中央に横断ラインを設定（左から右へ）
+    // 画面の中央に横断ラインを設定（左から右へ）- より広い範囲に変更
     peopleCounterRef.current.setCrossingLine(
-      width * 0.2, // 左端から20%の位置
+      width * 0.1, // 左端から10%の位置（元の値: 0.2）
       height * 0.5, // 上端から50%の位置
-      width * 0.8, // 左端から80%の位置
+      width * 0.9, // 左端から90%の位置（元の値: 0.8）
       height * 0.5, // 上端から50%の位置
     )
   }
