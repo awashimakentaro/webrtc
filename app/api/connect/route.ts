@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     <head>
       <title>リモートカメラ接続</title>
       <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale: 1.0">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
       <style>
         * {
@@ -322,6 +322,9 @@ export async function GET(request: NextRequest) {
         let imageQuality = 0.7; // デフォルトの画質
         let imageResolution = { width: 640, height: 480 }; // デフォルトの解像度
         let frameIntervalId = null;
+        let connectionRetries = 0;
+        let maxConnectionRetries = 10;
+        let connectionRetryDelay = 2000; // 2秒
         
         // 品質設定の変更イベント
         qualitySelect.addEventListener('change', () => {
@@ -374,7 +377,7 @@ export async function GET(request: NextRequest) {
               window.parent.postMessage({ 
                 type: 'connection-status', 
                 status: status 
-              }, window.location.origin);
+              }, '*'); // オリジンを制限しない
             } catch (e) {
               log('親ウィンドウへの通知エラー: ' + e);
             }
@@ -653,102 +656,142 @@ export async function GET(request: NextRequest) {
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
                 { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' }
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'stun:stun.stunprotocol.org:3478' },
+                { urls: 'stun:stun.ekiga.net:3478' },
+                { urls: 'stun:stun.ideasip.com:3478' },
+                { urls: 'stun:stun.voiparound.com:3478' }
               ]
-            }
+            },
+            secure: true, // SSL接続を使用
+            host: 'peerjs-server.onrender.com', // カスタムPeerJSサーバー
+            port: 443, // HTTPSポート
+            path: '/' // パス
           };
           
           // PeerJSインスタンスの作成
-          peer = new Peer(peerId, peerConfig);
-          
-          // 接続イベント
-          peer.on('open', id => {
-            log('ピア接続確立: ' + id);
-            updateStatus('ピアサーバーに接続しました');
+          try {
+            peer = new Peer(peerId, peerConfig);
             
-            if (mode === 'camera') {
-              // カメラモードの場合は待機
-              updateStatus('視聴者からの接続を待機中...');
-            } else {
-              // 視聴モードの場合はカメラに接続
-              connectToCamera();
-            }
-          });
-          
-          // エラーイベント
-          peer.on('error', err => {
-            log('ピアエラー: ' + err.type);
-            updateStatus('エラーが発生しました: ' + err.type);
-            
-            // 既に使用されているIDの場合は、ランダムなIDで再試行
-            if (err.type === 'unavailable-id') {
-              const randomId = Math.random().toString(36).substring(2, 8);
-              const newPeerId = mode === 'camera' ? 'camera-' + randomId : 'viewer-' + randomId;
-              log('新しいIDで再試行: ' + newPeerId);
-              peer = new Peer(newPeerId, peerConfig);
-            } else if (err.type === 'peer-unavailable') {
-              // ピアが見つからない場合は再接続を提案
-              updateStatus('カメラが見つかりません - 再接続してください');
-            } else if (err.type === 'network' || err.type === 'disconnected') {
-              // ネットワークエラーの場合は再接続
-              log('ネットワークエラー - 再接続を試みます');
-              setTimeout(() => {
-                startConnection();
-              }, 3000);
-            }
-          });
-          
-          // カメラモードの場合のデータ接続処理
-          if (mode === 'camera') {
-            // データ接続処理
-            peer.on('connection', conn => {
-              connection = conn;
-              log('データ接続確立（カメラモード）');
+            // 接続イベント
+            peer.on('open', id => {
+              log('ピア接続確立: ' + id);
+              updateStatus('ピアサーバーに接続しました');
+              connectionRetries = 0; // 接続成功したらリトライカウントをリセット
               
-              conn.on('data', data => {
-                log('データ受信: ' + JSON.stringify(data));
-                
-                // pingに対してpongで応答
-                if (data.type === 'ping') {
-                  conn.send({ type: 'pong', timestamp: Date.now() });
-                }
-                
-                // 品質設定の変更リクエスト
-                if (data.type === 'quality-change') {
-                  log('品質設定変更リクエスト: ' + data.quality);
-                  qualitySelect.value = data.quality;
-                  qualitySelect.dispatchEvent(new Event('change'));
-                }
-              });
-              
-              conn.on('open', () => {
-                log('データチャネルオープン');
-                updateStatus('視聴者と接続しました');
-                
-                // フレーム送信を開始
-                startFrameSending();
-                
-                // 定期的にステータスを送信
-                setInterval(() => {
-                  if (conn.open) {
-                    conn.send({ 
-                      type: 'status', 
-                      streaming: true,
-                      fps: fps,
-                      quality: qualitySelect.value,
-                      resolution: \`\${imageResolution.width}x\${imageResolution.height}\`,
-                      timestamp: Date.now() 
-                    });
-                  }
-                }, 5000);
-              });
-              
-              conn.on('close', () => {
-                log('データ接続終了');
-                updateStatus('視聴者との接続が終了しました');
-                stopFrameSending();
-              });
+              if (mode === 'camera') {
+                // カメラモードの場合は待機
+                updateStatus('視聴者からの接続を待機中...');
+              } else {
+                // 視聴モードの場合はカメラに接続
+                connectToCamera();
+              }
             });
+            
+            // エラーイベント
+            peer.on('error', err => {
+              log('ピアエラー: ' + err.type + ' - ' + (err.message || ''));
+              updateStatus('エラーが発生しました: ' + err.type);
+              
+              // 既に使用されているIDの場合は、ランダムなIDで再試行
+              if (err.type === 'unavailable-id') {
+                const randomId = Math.random().toString(36).substring(2, 8);
+                const newPeerId = mode === 'camera' ? 'camera-' + randomId : 'viewer-' + randomId;
+                log('新しいIDで再試行: ' + newPeerId);
+                peer = new Peer(newPeerId, peerConfig);
+              } else if (err.type === 'peer-unavailable') {
+                // ピアが見つからない場合は再接続を提案
+                updateStatus('カメラが見つかりません - 再接続してください');
+                
+                // 一定回数まで自動再試行
+                if (connectionRetries < maxConnectionRetries) {
+                  connectionRetries++;
+                  log(\`接続再試行 (\${connectionRetries}/\${maxConnectionRetries})...\`);
+                  setTimeout(() => {
+                    if (mode === 'viewer') {
+                      connectToCamera();
+                    }
+                  }, connectionRetryDelay);
+                }
+              } else if (err.type === 'network' || err.type === 'disconnected') {
+                // ネットワークエラーの場合は再接続
+                log('ネットワークエラー - 再接続を試みます');
+                setTimeout(() => {
+                  startConnection();
+                }, 3000);
+              }
+            });
+            
+            // 切断イベント
+            peer.on('disconnected', () => {
+              log('ピアサーバーから切断されました');
+              updateStatus('サーバーから切断されました - 再接続中...');
+              
+              // 自動再接続
+              setTimeout(() => {
+                if (peer) {
+                  peer.reconnect();
+                } else {
+                  startConnection();
+                }
+              }, 3000);
+            });
+            
+            // カメラモードの場合のデータ接続処理
+            if (mode === 'camera') {
+              // データ接続処理
+              peer.on('connection', conn => {
+                connection = conn;
+                log('データ接続確立（カメラモード）');
+                
+                conn.on('data', data => {
+                  log('データ受信: ' + JSON.stringify(data));
+                  
+                  // pingに対してpongで応答
+                  if (data.type === 'ping') {
+                    conn.send({ type: 'pong', timestamp: Date.now() });
+                  }
+                  
+                  // 品質設定の変更リクエスト
+                  if (data.type === 'quality-change') {
+                    log('品質設定変更リクエスト: ' + data.quality);
+                    qualitySelect.value = data.quality;
+                    qualitySelect.dispatchEvent(new Event('change'));
+                  }
+                });
+                
+                conn.on('open', () => {
+                  log('データチャネルオープン');
+                  updateStatus('視聴者と接続しました');
+                  
+                  // フレーム送信を開始
+                  startFrameSending();
+                  
+                  // 定期的にステータスを送信
+                  setInterval(() => {
+                    if (conn.open) {
+                      conn.send({ 
+                        type: 'status', 
+                        streaming: true,
+                        fps: fps,
+                        quality: qualitySelect.value,
+                        resolution: \`\${imageResolution.width}x\${imageResolution.height}\`,
+                        timestamp: Date.now() 
+                      });
+                    }
+                  }, 5000);
+                });
+                
+                conn.on('close', () => {
+                  log('データ接続終了');
+                  updateStatus('視聴者との接続が終了しました');
+                  stopFrameSending();
+                });
+              });
+            }
+          } catch (err) {
+            log('PeerJS初期化エラー: ' + err);
+            updateStatus('接続初期化エラー: ' + err);
           }
         }
         
@@ -763,11 +806,15 @@ export async function GET(request: NextRequest) {
           
           try {
             // データ接続
-            connection = peer.connect(targetId);
+            connection = peer.connect(targetId, {
+              reliable: true,
+              serialization: 'json'
+            });
             
             connection.on('open', () => {
               log('データ接続確立（視聴モード）');
               updateStatus('カメラとデータ接続しました');
+              connectionRetries = 0; // 接続成功したらリトライカウントをリセット
               
               // pingを送信
               connection.send({ type: 'ping', timestamp: Date.now() });
@@ -824,7 +871,7 @@ export async function GET(request: NextRequest) {
                       data: data.data,
                       width: data.width,
                       height: data.height
-                    }, window.location.origin); // オリジン制限を元に戻す
+                    }, '*'); // オリジン制限を緩和
                   } catch (e) {
                     log('画像データ送信エラー: ' + e);
                   }
@@ -851,6 +898,15 @@ export async function GET(request: NextRequest) {
             connection.on('close', () => {
               log('データ接続終了');
               updateStatus('カメラとの接続が終了しました');
+              
+              // 一定回数まで自動再接続
+              if (connectionRetries < maxConnectionRetries) {
+                connectionRetries++;
+                log(\`接続再試行 (\${connectionRetries}/\${maxConnectionRetries})...\`);
+                setTimeout(() => {
+                  connectToCamera();
+                }, connectionRetryDelay);
+              }
             });
           } catch (err) {
             log('接続エラー: ' + err);
@@ -1035,14 +1091,15 @@ export async function GET(request: NextRequest) {
         
         // 親ウィンドウからのメッセージを受信
         window.addEventListener('message', (event) => {
-          if (event.origin === window.location.origin) {
+          // オリジン制限を緩和
+          // if (event.origin === window.location.origin) {
             // 品質設定の変更
             if (event.data && event.data.type === 'quality-change') {
               log('親ウィンドウから品質設定変更: ' + event.data.quality);
               qualitySelect.value = event.data.quality;
               qualitySelect.dispatchEvent(new Event('change'));
             }
-          }
+          // }
         });
       </script>
     </body>
